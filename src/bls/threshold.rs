@@ -2,7 +2,7 @@ use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::PrimeGroup;
 
 use crate::bls::vanilla::StandaloneSig;
-use crate::dkg::DkgResult;
+use crate::pvss::SecretSharing;
 
 // Used to verify aggregated threshold signatures.
 // `c = f(0).g1` is the public key associated with the dealing.
@@ -23,7 +23,7 @@ pub struct AggThresholdSig<C: Pairing> {
 }
 
 impl<C: Pairing> ThresholdVk<C> {
-    pub fn from_share(share: &DkgResult<C>) -> Self { //TODO: consume?
+    pub fn from_share(share: &SecretSharing<C>) -> Self { //TODO: consume?
         Self {
             c: share.c,
             h1: share.h1,

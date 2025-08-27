@@ -2,7 +2,6 @@ use ark_ec::scalar_mul::glv::GLVConfig;
 use ark_ec::short_weierstrass::{Affine, Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, BigInteger, BitIteratorBE, PrimeField, Zero};
-use ark_std::iterable::Iterable;
 use ark_std::{end_timer, format, start_timer};
 use ark_std::{iter, vec, vec::Vec};
 
@@ -47,11 +46,11 @@ fn digits_to_index<I: Iterator<Item=u32>>(digits: I, powers_of_c: &[u32]) -> usi
 
 /// Converts `bits` highlighting a subset of the points to the index at which the sum of the subset is located in the table.
 // The powers of `2` should start from `1`, so the least significant bit goes first.
-fn bits_to_index<I: Iterator<Item=bool>>(bits: I, powers_of_2: &[u32]) -> usize {
-    bits.zip(powers_of_2.iter())
-        .filter_map(|(bit, power)| bit.then_some(power))
-        .sum::<u32>() as usize
-}
+// fn bits_to_index<I: Iterator<Item=bool>>(bits: I, powers_of_2: &[u32]) -> usize {
+//     bits.zip(powers_of_2.iter())
+//         .filter_map(|(bit, power)| bit.then_some(power))
+//         .sum::<u32>() as usize
+// }
 
 /// Pads the binary decomposition of the `scalar` by `0`s from the left (msbf),
 /// so that the bit length is divided evenly by the window size `w`.

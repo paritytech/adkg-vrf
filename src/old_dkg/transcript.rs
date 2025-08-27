@@ -3,8 +3,8 @@ use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::vec::Vec;
 
-use crate::dkg::DkgResult;
 use crate::koe;
+use crate::old_dkg::DkgResult;
 
 /// Standalone or aggregated transcript with the witness.
 // TODO: add weights?

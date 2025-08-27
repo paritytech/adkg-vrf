@@ -1,8 +1,11 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use crate::dkg::verifier::TranscriptVerifier;
-use crate::dkg::{Ceremony, DkgTranscript};
-use ark_poly::Radix2EvaluationDomain;
+use crate::dkg::aggregator::TranscriptAggregator;
+use crate::pvss::SecretSharing;
+use ark_ec::pairing::Pairing;
+use ark_ff::FftField;
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+use std::marker::PhantomData;
 
 /// Threshold Verifiable Unpredictable Function (VUF) scheme.
 /// Produces an unpredictable output by aggregating a threshold number of vanilla BLS signatures on the input.
@@ -21,19 +24,45 @@ use ark_poly::Radix2EvaluationDomain;
 /// The implementation follows the notes by Alistair Stewart:
 /// 1. https://hackmd.io/3968Gr5hSSmef-nptg2GRw
 /// 2. https://hackmd.io/xqYBrigYQwyKM_0Sn5Xf4w
+/// TODO: is there a paper?
 
 /// Aggregatable Publicly Verifiable Secret Sharing Scheme
-pub mod dkg;
+mod old_dkg;
 pub mod utils;
 pub mod koe;
 pub mod agg;
 pub mod bls;
 pub mod straus;
+pub mod pvss;
+pub mod dkg;
 
-pub type BlsBlsPublicKey = ark_bls12_381::G2Affine;
-pub type BlsCeremony<'a> = Ceremony<'a, ark_bls12_381::Bls12_381, Radix2EvaluationDomain<ark_bls12_381::Fr>>;
-pub type BlsTranscript = DkgTranscript<ark_bls12_381::Bls12_381>;
-pub type BlsTranscriptVerifier = TranscriptVerifier<ark_bls12_381::Bls12_381>;
+pub struct ThresholdCrypto<C: Pairing> {
+    secret_sharing: SecretSharing<C>,
+    params: pvss::Params<C>,
+}
+pub struct Config<F: FftField, D: EvaluationDomain<F> = GeneralEvaluationDomain<F>> {
+    n: usize,
+    t: usize,
+    domain: D,
+    ph: PhantomData<F>
+}
+
+impl<C: Pairing> ThresholdCrypto<C> {
+    fn config(&self) -> Config<C::ScalarField> {
+        Config {
+            n: self.params.n,
+            t: self.params.t,
+            domain: self.params.domain,
+            ph: PhantomData,
+        }
+    }
+}
+
+
+pub type BlsDkg = dkg::Dkg<ark_bls12_381::Bls12_381>;
+pub type BlsSignerPk = ark_bls12_381::G2Affine;
+pub type BlsTranscriptAggregator = TranscriptAggregator<ark_bls12_381::Bls12_381>;
+pub type DkgTranscript = dkg::Transcript<ark_bls12_381::Bls12_381>;
 
 // must have
 // TODO: Fiat-Shamir
@@ -59,60 +88,111 @@ pub type BlsTranscriptVerifier = TranscriptVerifier<ark_bls12_381::Bls12_381>;
 
 #[cfg(test)]
 mod tests {
+    use crate::bls::threshold::{AggThresholdSig, ThresholdVk};
+    use crate::bls::vanilla::{BlsSigner, StandaloneSig};
+    use crate::dkg::{Dkg, Transcript};
+    use crate::utils::BarycentricDomain;
+    use crate::Config;
+    use ark_bls12_381::{Bls12_381, G1Affine, G1Projective};
     use ark_ec::pairing::Pairing;
-    use ark_ec::{CurveGroup, PrimeGroup};
-    use ark_poly::GeneralEvaluationDomain;
+    use ark_ec::{AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
+    use ark_ff::Zero;
+    use ark_poly::EvaluationDomain;
     use ark_std::test_rng;
-    use ark_std::{vec, vec::Vec};
+    use ark_std::vec::Vec;
+    use hashbrown::HashMap;
 
-    use crate::bls::threshold::ThresholdVk;
-    use crate::bls::vanilla::BlsSigner;
-    use crate::dkg::Ceremony;
-
-    fn _it_works<C: Pairing>() {
-        let rng = &mut test_rng();
-
-        let (n, t) = (7, 5);
-        let signers: Vec<BlsSigner<C>> = (0..n)
-            .map(|_| BlsSigner::new(C::G2::generator(), rng))
+    pub fn aggregator<C: Pairing>(signer_pks: &[C::G2Affine], bgpks: Vec<C::G2Affine>) -> crate::agg::SignatureAggregator<C> {
+        let pks: HashMap<_, _> = signer_pks.iter()
+            .cloned()
+            .zip(bgpks)
+            .enumerate()
+            .map(|(j, (signer_pk_j, bgpk_j))| (signer_pk_j, (bgpk_j, j)))
             .collect();
-        let signers_pks: Vec<_> = signers.iter()
-            .map(|s| s.bls_pk_g2)
+        crate::agg::SignatureAggregator {
+            g2: C::G2Affine::generator(),
+            pks,
+        }
+    }
+
+    pub fn aggregate_augmented_sigs<C: Pairing>(augmented_sigs: Vec<Option<AggThresholdSig<C>>>, config: &Config<C::ScalarField>) -> AggThresholdSig<C> {
+        assert_eq!(augmented_sigs.len(), config.n);
+        let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
+        bitmask.resize(config.domain.size(), false);
+        let set_bits_count = bitmask.iter().filter(|b| **b).count();
+        assert!(set_bits_count >= config.t);
+        let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
+            .lagrange_basis_at(C::ScalarField::zero());
+        let augmented_sigs: Vec<AggThresholdSig<C>> = augmented_sigs.into_iter()
+            .flatten()
             .collect();
-        let params = Ceremony::<C, GeneralEvaluationDomain<C::ScalarField>>::setup(t, &signers_pks);
-        let transcript_verifier = params.verifier();
-
-        let transcript = params.deal(rng);
-        params.verify_transcript_unoptimized(&transcript, rng);
-        assert!(transcript_verifier.verify(&params, &transcript, rng));
-
-        let another_transcript = params.deal(rng);
-        let agg_transcript = transcript.merge_with(&vec![another_transcript]);
-        assert!(transcript_verifier.verify(&params, &agg_transcript, rng));
-
-        let message = C::G1::generator();
-        let sigs: Vec<_> = signers.iter()
-            .map(|s| s.sign(message))
-            .collect();
-
-        let threshold_vk = ThresholdVk::from_share(&agg_transcript.payload);
-        let sig_aggregator = params.aggregator(agg_transcript.payload);
-
-        let mut sig_agg_session_n = sig_aggregator.start_session(message.into_affine());
-        sig_agg_session_n.append_verify_sigs(sigs.clone());
-        let threshold_sig_n = sig_agg_session_n.finalize(&params);
-        let vuf_n = threshold_vk.vuf_unoptimized(&threshold_sig_n, message);
-
-        let mut sig_agg_session_t = sig_aggregator.start_session(message.into_affine());
-        sig_agg_session_t.append_verify_sigs(sigs.into_iter().take(t).collect());
-        let threshold_sig_t = sig_agg_session_t.finalize(&params);
-        let vuf_t = threshold_vk.vuf_unoptimized(&threshold_sig_t, message);
-        assert_eq!(vuf_t, vuf_n);
+        let bls_sigs: Vec<_> = augmented_sigs.iter().map(|s| s.bls_sig_with_pk.sig).collect();
+        let bls_pks: Vec<_> = augmented_sigs.iter().map(|s| s.bls_sig_with_pk.pk).collect();
+        let bgpks: Vec<_> = augmented_sigs.iter().map(|s| s.bgpk).collect();
+        let asig = C::G1::msm(&bls_sigs, &lis).unwrap().into_affine();
+        let apk = C::G2::msm(&bls_pks, &lis).unwrap().into_affine();
+        let abgpk = C::G2::msm(&bgpks, &lis).unwrap().into_affine();
+        AggThresholdSig {
+            bls_sig_with_pk: StandaloneSig { sig: asig, pk: apk },
+            bgpk: abgpk,
+        }
     }
 
     #[test]
     fn it_works() {
-        _it_works::<ark_bls12_381::Bls12_381>()
+        let rng = &mut test_rng();
+
+        let (n, t) = (7, 5);
+        let signers: Vec<BlsSigner<Bls12_381>> = (0..n)
+            .map(|_| BlsSigner::new(rng))
+            .collect();
+        let signers_pks: Vec<_> = signers.iter()
+            .map(|s| s.bls_pk_g2)
+            .collect();
+
+        let dealers: Vec<_> = (0..3)
+            .map(|_| BlsSigner::<Bls12_381>::new(rng))
+            .collect();
+        let dealer_pks: Vec<G1Affine> = dealers.iter()
+            .map(|d| d.bls_pk_g1)
+            .collect();
+
+        let dkg = Dkg::<Bls12_381>::new(signers_pks.clone(), t, dealer_pks.clone(), dealer_pks.len()).unwrap();
+        let pvss_verifier = dkg.pvss.precompute_verifier();
+
+        let transcripts: Vec<Transcript<Bls12_381>> = dealers.into_iter()
+            .map(|dealer| dkg.deal_and_sign(rng, (dealer.sk, dealer.bls_pk_g1)))
+            .collect();
+
+        assert!(dkg.verify(&transcripts[0], &pvss_verifier, rng).is_ok());
+
+        let agg_transcript = Dkg::<Bls12_381>::aggregate(transcripts);
+
+        assert!(dkg.verify(&agg_transcript, &pvss_verifier, rng).is_ok());
+
+        let keys = dkg.finalize(agg_transcript, rng).unwrap();
+
+        let config = keys.config();
+        let threshold_vk = ThresholdVk::from_share(&keys.secret_sharing);
+        let sig_aggregator = aggregator::<Bls12_381>(&signers_pks, keys.secret_sharing.bgpk);
+
+        let message = G1Projective::generator();
+        let sigs: Vec<_> = signers.iter()
+            .map(|s| s.sign_g1(message))
+            .collect();
+
+        let mut sig_agg_session_n = sig_aggregator.start_session(message.into_affine());
+        sig_agg_session_n.append_verify_sigs(sigs.clone());
+        let augmented_sigs_n = sig_agg_session_n.finalize();
+        let threshold_sig_n = aggregate_augmented_sigs(augmented_sigs_n, &config);
+        let vuf_n = threshold_vk.vuf_unoptimized(&threshold_sig_n, message);
+
+        let mut sig_agg_session_t = sig_aggregator.start_session(message.into_affine());
+        sig_agg_session_t.append_verify_sigs(sigs.into_iter().take(t).collect());
+        let augmented_sigs_t = sig_agg_session_t.finalize();
+        let threshold_sig_t = aggregate_augmented_sigs(augmented_sigs_t, &config);
+        let vuf_t = threshold_vk.vuf_unoptimized(&threshold_sig_t, message);
+        assert_eq!(vuf_t, vuf_n);
     }
 }
 

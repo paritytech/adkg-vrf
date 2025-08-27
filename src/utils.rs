@@ -1,6 +1,6 @@
 use ark_ff::{FftField, Field};
-use ark_poly::{DenseUVPolynomial, EvaluationDomain};
 use ark_poly::univariate::DensePolynomial;
+use ark_poly::{DenseUVPolynomial, EvaluationDomain};
 use ark_std::{end_timer, iter, start_timer};
 use ark_std::{vec, vec::Vec};
 
@@ -39,6 +39,7 @@ fn diff<F: Field>(f: &DensePolynomial<F>) -> DensePolynomial<F> {
 /// A set of interpolation points together with the precomputed weights.
 /// The points don't have to form a multiplicative group.
 /// After the weights are computed, evaluating an interpolant at a point takes `O(n)`.
+#[derive(Clone)]
 pub struct BarycentricDomain<F: Field> {
     /// Interpolation points `x_1,...,x_n`.
     xs: Vec<F>,
@@ -152,11 +153,11 @@ pub fn powers<F: Field>(base: F) -> impl Iterator<Item=F> {
 #[cfg(test)]
 mod tests {
     use ark_ec::CurveGroup;
-    use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
     use ark_poly::univariate::DensePolynomial;
-    use ark_std::{end_timer, format, start_timer, test_rng};
+    use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
     use ark_std::rand::Rng;
     use ark_std::UniformRand;
+    use ark_std::{end_timer, format, start_timer, test_rng};
 
     use super::*;
 

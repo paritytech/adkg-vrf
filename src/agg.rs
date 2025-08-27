@@ -1,11 +1,9 @@
 use ark_ec::pairing::Pairing;
-use ark_poly::EvaluationDomain;
 use ark_std::{vec, vec::Vec};
 use hashbrown::HashMap;
 
 use crate::bls::threshold::AggThresholdSig;
 use crate::bls::vanilla::StandaloneSig;
-use crate::dkg::Ceremony;
 
 pub struct SignatureAggregator<C: Pairing> {
     // to verify BLS sigs with the keys in G2
@@ -37,8 +35,9 @@ pub struct Session<'a, C: Pairing> {
 }
 
 impl<'a, C: Pairing> Session<'a, C> {
-    pub fn finalize<D: EvaluationDomain<C::ScalarField>>(self, params: &Ceremony<C, D>) -> AggThresholdSig<C> {
-        params.aggregate_augmented_sigs(self.augmented_sigs)
+    pub fn finalize(self) -> Vec<Option<AggThresholdSig<C>>> {
+        self.augmented_sigs
+        // params.aggregate_augmented_sigs(self.augmented_sigs)
     }
 
     /// Signatures MUST

@@ -7,9 +7,9 @@ use ark_std::rand::Rng;
 use ark_std::{end_timer, start_timer, UniformRand};
 use ark_std::{vec, vec::Vec};
 
-use crate::dkg::transcript::{DkgTranscript, KoeProof};
-use crate::dkg::{Ceremony, DkgResult};
 use crate::koe;
+use crate::old_dkg::transcript::{DkgTranscript, KoeProof};
+use crate::old_dkg::{Ceremony, DkgResult};
 
 impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
     //TODO: cryptorng?
