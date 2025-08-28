@@ -39,7 +39,7 @@ pub struct Config<C: Pairing, D: EvaluationDomain<C::ScalarField> = GeneralEvalu
 
 impl<C: Pairing> Config<C> {
     pub fn new(n: usize, t: usize) -> Result<Self, ()> {
-        if !(n > 0 && t > 0 && t >= n) { // todo: test t = 1, t = n
+        if !(n > 0 && t > 0 && t <= n) { // todo: test t = 1, t = n
             return Err(());
         }
         let domain = GeneralEvaluationDomain::new(n).ok_or(())?;

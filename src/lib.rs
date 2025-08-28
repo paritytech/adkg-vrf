@@ -3,6 +3,7 @@
 use crate::dkg::aggregator::TranscriptAggregator;
 use crate::pvss::SecretSharing;
 use ark_ec::pairing::Pairing;
+use dkg::transcript;
 
 /// Threshold Verifiable Unpredictable Function (VUF) scheme.
 /// Produces an unpredictable output by aggregating a threshold number of vanilla BLS signatures on the input.
@@ -47,7 +48,7 @@ impl<C: Pairing> ThresholdCrypto<C> {
 pub type BlsDkg = dkg::Dkg<ark_bls12_381::Bls12_381>;
 pub type BlsSignerPk = ark_bls12_381::G2Affine;
 pub type BlsTranscriptAggregator = TranscriptAggregator<ark_bls12_381::Bls12_381>;
-pub type DkgTranscript = dkg::Transcript<ark_bls12_381::Bls12_381>;
+pub type DkgTranscript = transcript::Transcript<ark_bls12_381::Bls12_381>;
 
 // must have
 // TODO: Fiat-Shamir
@@ -75,9 +76,10 @@ pub type DkgTranscript = dkg::Transcript<ark_bls12_381::Bls12_381>;
 mod tests {
     use crate::bls::threshold::{AggThresholdSig, ThresholdVk};
     use crate::bls::vanilla::{BlsSigner, StandaloneSig};
-    use crate::dkg::{Dkg, Transcript};
+    use crate::dkg::transcript::Transcript;
+    use crate::dkg::Dkg;
+    use crate::pvss;
     use crate::utils::BarycentricDomain;
-    use crate::Config;
     use ark_bls12_381::{Bls12_381, G1Affine, G1Projective};
     use ark_ec::pairing::Pairing;
     use ark_ec::{AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
@@ -100,7 +102,7 @@ mod tests {
         }
     }
 
-    pub fn aggregate_augmented_sigs<C: Pairing>(augmented_sigs: Vec<Option<AggThresholdSig<C>>>, config: &Config<C::ScalarField>) -> AggThresholdSig<C> {
+    pub fn aggregate_augmented_sigs<C: Pairing>(augmented_sigs: Vec<Option<AggThresholdSig<C>>>, config: &pvss::Config<C>) -> AggThresholdSig<C> {
         assert_eq!(augmented_sigs.len(), config.n);
         let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
         bitmask.resize(config.domain.size(), false);
@@ -143,7 +145,7 @@ mod tests {
             .collect();
 
         let dkg = Dkg::<Bls12_381>::new(signers_pks.clone(), t, dealer_pks.clone(), dealer_pks.len()).unwrap();
-        let pvss_verifier = dkg.pvss.precompute_verifier();
+        let pvss_verifier = pvss::Verifier::new(dkg.pvss.config.clone());
 
         let transcripts: Vec<Transcript<Bls12_381>> = dealers.into_iter()
             .map(|dealer| dkg.deal_and_sign(rng, (dealer.sk, dealer.bls_pk_g1)))

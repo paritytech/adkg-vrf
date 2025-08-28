@@ -1,5 +1,5 @@
 use crate::dkg;
-use crate::dkg::{ContributionReceipt, Transcript};
+use crate::dkg::transcript::{ContributionReceipt, Transcript};
 use crate::pvss::{SecretSharingWithWitness, Verifier};
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
