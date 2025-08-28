@@ -21,23 +21,23 @@ pub struct Dkg<C: Pairing> {
 }
 
 /// A dealer not interested in further participation in the protocol (aggregating transcripts) can call this.
-pub fn deal_and_sign<C: Pairing, R: Rng>(pvss: &pvss::Params<C>, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Transcript<C>
+pub fn deal_and_sign<C: Pairing, R: Rng>(pvss: &pvss::Params<C>, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Result<Transcript<C>, ()>
 where
     <C::G2 as CurveGroup>::Config: WBConfig,
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
     let ssk = C::ScalarField::rand(rng);
     let sh = C::ScalarField::rand(rng);
-    let ss = pvss.deal_secrets(ssk, sh, rng);
+    let ss = pvss.deal_secrets(ssk, sh, rng)?;
     let receipt = ContributionReceipt::<C>::sign(
         (ssk, ss.payload.c),
         (sh, ss.payload.h1),
         dealer,
     );
-    Transcript {
+    Ok(Transcript {
         agg_ss: ss,
         receipts: vec![(receipt, 1)],
-    }
+    })
 }
 
 impl<C: Pairing> Dkg<C>
@@ -58,7 +58,7 @@ where
         Self::from_pvss(pvss, dealer_pks, t_dkg)
     }
 
-    pub fn deal_and_sign<R: Rng>(&self, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Transcript<C> {
+    pub fn deal_and_sign<R: Rng>(&self, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Result<Transcript<C>, ()> {
         deal_and_sign(&self.pvss, rng, dealer)
     }
 

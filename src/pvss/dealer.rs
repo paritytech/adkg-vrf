@@ -9,7 +9,7 @@ use ark_std::rand::Rng;
 use ark_std::{end_timer, start_timer, UniformRand};
 
 impl<C: Pairing> Params<C> {
-    pub fn deal<R: Rng>(&self, rng: &mut R) -> SecretSharingWithWitness<C> {
+    pub fn deal<R: Rng>(&self, rng: &mut R) -> Result<SecretSharingWithWitness<C>, ()> {
         let f = DensePolynomial::rand(self.config.t - 1, rng);
         let sh = C::ScalarField::rand(rng);
         self._deal(f, sh)
@@ -17,7 +17,7 @@ impl<C: Pairing> Params<C> {
 
     /// Samples a random degree `t-1` polynomial `f` with constant term `ssk` (in other words, `f(0) = ssk`)
     /// and shares the secret `ssk.g2` using `f`. `(h1 = sh.g1, h2 = sh.g2)`.
-    pub fn deal_secrets<R: Rng>(&self, ssk: C::ScalarField, sh: C::ScalarField, rng: &mut R) -> SecretSharingWithWitness<C> {
+    pub fn deal_secrets<R: Rng>(&self, ssk: C::ScalarField, sh: C::ScalarField, rng: &mut R) -> Result<SecretSharingWithWitness<C>, ()> {
         let t = self.config.t;
         let mut coeffs = Vec::with_capacity(t);
         coeffs.push(ssk); // constant term
@@ -28,8 +28,11 @@ impl<C: Pairing> Params<C> {
         self._deal(f, sh)
     }
 
-    fn _deal(&self, f_mon: DensePolynomial<C::ScalarField>, sh: C::ScalarField) -> SecretSharingWithWitness<C> {
+    fn _deal(&self, f_mon: DensePolynomial<C::ScalarField>, sh: C::ScalarField) -> Result<SecretSharingWithWitness<C>, ()> {
         let ssk = f_mon[0];
+        if ssk.is_zero() || sh.is_zero() || f_mon.degree() != self.config.t - 1 {
+            return Err(());
+        }
         assert!(!ssk.is_zero());
         assert!(!sh.is_zero());
         assert_eq!(f_mon.degree(), self.config.t - 1);
@@ -63,9 +66,9 @@ impl<C: Pairing> Params<C> {
         let h1 = (self.config.g1 * sh).into_affine();
         let h2 = (self.config.g2 * sh).into_affine();
 
-        SecretSharingWithWitness {
+        Ok(SecretSharingWithWitness {
             a: f_lag_g1,
             payload: SecretSharing { c, bgpk, h1, h2 },
-        }
+        })
     }
 }
