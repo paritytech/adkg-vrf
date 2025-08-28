@@ -1,7 +1,7 @@
 mod dealer;
 pub mod verifier;
 
-pub use verifier::TranscriptVerifier;
+pub use verifier::Verifier;
 
 use ark_ec::pairing::Pairing;
 use ark_ec::{CurveGroup, PrimeGroup};
@@ -21,16 +21,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 /// whose public keys `(pk_1,...,pk_n)` in `G2` are known in order. `1 <= t <= n`.
 /// TODO:
 
-/// Parameters of a PVSS.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Params<C: Pairing, D: EvaluationDomain<C::ScalarField> = GeneralEvaluationDomain<<C as Pairing>::ScalarField>> {
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct Config<C: Pairing, D: EvaluationDomain<C::ScalarField> = GeneralEvaluationDomain<<C as Pairing>::ScalarField>> {
     /// The number of signers.
     pub n: usize,
     /// The threshold, i.e. the minimal number of signers required to reconstruct the shared secret.
     pub t: usize,
-    /// The signers' bls public keys in G2.
-    /// **Proofs of possession should be checked for these keys.**
-    pub signer_pks: Vec<C::G2Affine>,
     /// An FFT-friendly multiplicative subgroup of the field, of size not less than `n`.
     /// The evaluation points are the first `n` elements of the subgroup: `x_j = w^j, j = 0,...,n-1`,
     /// where `w` is the generator of the subgroup.
@@ -39,6 +35,42 @@ pub struct Params<C: Pairing, D: EvaluationDomain<C::ScalarField> = GeneralEvalu
     pub g1: C::G1,
     /// Generator of G2.
     pub g2: C::G2,
+}
+
+impl<C: Pairing> Config<C> {
+    pub fn new(n: usize, t: usize) -> Result<Self, ()> {
+        if !(n > 0 && t > 0 && t >= n) { // todo: test t = 1, t = n
+            return Err(());
+        }
+        let domain = GeneralEvaluationDomain::new(n).ok_or(())?;
+        Ok(Self {
+            n,
+            t,
+            domain,
+            g1: C::G1::generator(),
+            g2: C::G2::generator(),
+        })
+    }
+}
+
+/// Parameters of a PVSS.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Params<C: Pairing, D: EvaluationDomain<C::ScalarField> = GeneralEvaluationDomain<<C as Pairing>::ScalarField>> {
+    pub config: Config<C, D>,
+    /// The signers' bls public keys in G2.
+    /// **Proofs of possession must be checked for these keys.**
+    pub signer_pks: Vec<C::G2Affine>,
+}
+
+impl<C: Pairing> Params<C> {
+    pub fn new(signer_pks: Vec<C::G2Affine>, t: usize) -> Result<Self, ()> {
+        let n = signer_pks.len();
+        let config = Config::new(n, t)?;
+        Ok(Self {
+            config,
+            signer_pks,
+        })
+    }
 }
 
 /// A dealer samples a scalar `sh` and a degree `t-1` polynomial `f` with scalar coefficients.
@@ -73,26 +105,6 @@ pub struct SecretSharingWithWitness<C: Pairing> {
     pub payload: SecretSharing<C>,
 }
 
-impl<C: Pairing, D: EvaluationDomain<C::ScalarField>> Params<C, D> {
-    /// Creates a PVSS for a group of signers.
-    /// Proofs of possession must be checked for the signers' keys.
-    /// `signer_pks` shouldn't contain duplicates.
-    pub fn new(t: usize, signer_pks: Vec<C::G2Affine>) -> Result<Self,()> {
-        let n = signer_pks.len();
-        if t == 0 || t > n { // todo: test t = 1, t = n
-            return Err(())
-        }
-        let domain = D::new(n).ok_or(())?;
-        Ok(Self {
-            n,
-            t,
-            signer_pks,
-            domain,
-            g1: C::G1::generator(),
-            g2: C::G2::generator(),
-        })
-    }
-}
 
 impl<C: Pairing> SecretSharingWithWitness<C> {
     pub fn aggregate_with(self, mut others: Vec<Self>) -> Self {

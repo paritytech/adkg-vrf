@@ -114,7 +114,7 @@ where
     }
 
     pub fn new(signer_pks: Vec<C::G2Affine>, t_pvss: usize, dealer_pks: Vec<C::G1Affine>, t_dkg: usize) -> Result<Self, ()> {
-        let pvss = pvss::Params::<C>::new(t_pvss, signer_pks)?;
+        let pvss = pvss::Params::<C>::new(signer_pks, t_pvss)?;
         Self::from_pvss(pvss, dealer_pks, t_dkg)
     }
 
@@ -136,7 +136,7 @@ where
     pub fn verify<R: Rng>(
         &self,
         transcript: &Transcript<C>,
-        pvss_verifier: &pvss::TranscriptVerifier<C>,
+        pvss_verifier: &pvss::Verifier<C>,
         rng: &mut R,
     ) -> Result<(), ()>
     where
@@ -148,7 +148,7 @@ where
             r.verify_all_sigs()?;
         }
         transcript.check_consistency()?;
-        pvss_verifier.verify(&transcript.agg_ss, &self.pvss, rng)?;
+        pvss_verifier.verify(&transcript.agg_ss, &self.pvss.signer_pks, rng)?;
         Ok(())
     }
 
@@ -176,7 +176,8 @@ where
     }
 
     pub fn finalize<R: Rng>(self, t: Transcript<C>, rng: &mut R) -> Result<ThresholdCrypto<C>,()> {
-        self.verify(&t, &self.pvss.precompute_verifier(), rng)?;
+        let v = pvss::Verifier::new(self.pvss.config.clone());
+        self.verify(&t, &v, rng)?;
         if !self.enough_dealers(&t) {
             return Err(())
         }

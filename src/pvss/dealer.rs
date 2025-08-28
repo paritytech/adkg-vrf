@@ -10,7 +10,7 @@ use ark_std::{end_timer, start_timer, UniformRand};
 
 impl<C: Pairing> Params<C> {
     pub fn deal<R: Rng>(&self, rng: &mut R) -> SecretSharingWithWitness<C> {
-        let f = DensePolynomial::rand(self.t - 1, rng);
+        let f = DensePolynomial::rand(self.config.t - 1, rng);
         let sh = C::ScalarField::rand(rng);
         self._deal(f, sh)
     }
@@ -18,11 +18,12 @@ impl<C: Pairing> Params<C> {
     /// Samples a random degree `t-1` polynomial `f` with constant term `ssk` (in other words, `f(0) = ssk`)
     /// and shares the secret `ssk.g2` using `f`. `(h1 = sh.g1, h2 = sh.g2)`.
     pub fn deal_secrets<R: Rng>(&self, ssk: C::ScalarField, sh: C::ScalarField, rng: &mut R) -> SecretSharingWithWitness<C> {
-        let mut coeffs = Vec::with_capacity(self.t);
+        let t = self.config.t;
+        let mut coeffs = Vec::with_capacity(t);
         coeffs.push(ssk); // constant term
-        coeffs.extend(&DensePolynomial::rand(self.t - 2, rng).coeffs); // ensures the leading coeff is not `0`
+        coeffs.extend(&DensePolynomial::rand(t - 2, rng).coeffs); // ensures the leading coeff is not `0`
         assert_eq!(coeffs[0], ssk);
-        assert!(!coeffs[self.t-1].is_zero());
+        assert!(!coeffs[t - 1].is_zero());
         let f = DensePolynomial::from_coefficients_vec(coeffs);
         self._deal(f, sh)
     }
@@ -31,16 +32,16 @@ impl<C: Pairing> Params<C> {
         let ssk = f_mon[0];
         assert!(!ssk.is_zero());
         assert!(!sh.is_zero());
-        assert_eq!(f_mon.degree(), self.t - 1);
-        let f_lag: Vec<C::ScalarField> = f_mon.evaluate_over_domain(self.domain)
+        assert_eq!(f_mon.degree(), self.config.t - 1);
+        let f_lag: Vec<C::ScalarField> = f_mon.evaluate_over_domain(self.config.domain)
             .evals.into_iter()
-            .take(self.n)
+            .take(self.config.n)
             .collect();
 
         // For log_n = 10, storing the precomputed tables would save only 5% of the total dealing time.
         let _t = start_timer!(|| "Commitment to the secret polynomial in G1 and G2");
-        let f_lag_g1 = self.g1.batch_mul(&f_lag); // `f(w^j).g1, j = 0,...,n-1`, the pvss witness `a`
-        let f_lag_g2 = self.g2.batch_mul(&f_lag); // `f(w^j).g2, j = 0,...,n-1`, shares of the secret
+        let f_lag_g1 = self.config.g1.batch_mul(&f_lag); // `f(w^j).g1, j = 0,...,n-1`, the pvss witness `a`
+        let f_lag_g2 = self.config.g2.batch_mul(&f_lag); // `f(w^j).g2, j = 0,...,n-1`, shares of the secret
         end_timer!(_t);
 
         let _t = start_timer!(|| "Key exchange");
@@ -58,9 +59,9 @@ impl<C: Pairing> Params<C> {
         let bgpk = C::G2::normalize_batch(&bgpk);
 
         // Can be batched, but who cares.
-        let c = (self.g1 * ssk).into_affine();
-        let h1 = (self.g1 * sh).into_affine();
-        let h2 = (self.g2 * sh).into_affine();
+        let c = (self.config.g1 * ssk).into_affine();
+        let h1 = (self.config.g1 * sh).into_affine();
+        let h2 = (self.config.g2 * sh).into_affine();
 
         SecretSharingWithWitness {
             a: f_lag_g1,

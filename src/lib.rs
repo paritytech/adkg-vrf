@@ -3,9 +3,6 @@
 use crate::dkg::aggregator::TranscriptAggregator;
 use crate::pvss::SecretSharing;
 use ark_ec::pairing::Pairing;
-use ark_ff::FftField;
-use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
-use std::marker::PhantomData;
 
 /// Threshold Verifiable Unpredictable Function (VUF) scheme.
 /// Produces an unpredictable output by aggregating a threshold number of vanilla BLS signatures on the input.
@@ -40,24 +37,12 @@ pub struct ThresholdCrypto<C: Pairing> {
     secret_sharing: SecretSharing<C>,
     params: pvss::Params<C>,
 }
-pub struct Config<F: FftField, D: EvaluationDomain<F> = GeneralEvaluationDomain<F>> {
-    n: usize,
-    t: usize,
-    domain: D,
-    ph: PhantomData<F>
-}
 
 impl<C: Pairing> ThresholdCrypto<C> {
-    fn config(&self) -> Config<C::ScalarField> {
-        Config {
-            n: self.params.n,
-            t: self.params.t,
-            domain: self.params.domain,
-            ph: PhantomData,
-        }
+    fn config(&self) -> pvss::Config<C> {
+        self.params.config.clone()
     }
 }
-
 
 pub type BlsDkg = dkg::Dkg<ark_bls12_381::Bls12_381>;
 pub type BlsSignerPk = ark_bls12_381::G2Affine;

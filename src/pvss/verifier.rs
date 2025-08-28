@@ -1,47 +1,33 @@
 use ark_ec::pairing::Pairing;
 use ark_ec::VariableBaseMSM;
 use ark_ff::{Field, One, Zero};
-use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::rand::Rng;
 use ark_std::vec::Vec;
 use ark_std::{end_timer, start_timer, UniformRand};
 
-use crate::pvss::{Params, SecretSharingWithWitness};
+use crate::pvss::{Config, SecretSharingWithWitness};
 use crate::utils::BarycentricDomain;
-
-impl<C: Pairing> Params<C> {
-    pub fn precompute_verifier(&self) -> TranscriptVerifier<C> {
-        TranscriptVerifier::new_with_domain(self.domain, self.n, self.t)
-    }
-}
 
 /// Precomputed barycentric weights to facilitate interpolation.
 /// Depend only on `(t,n)` so can be reused between the ceremonies.
-/// `pvss::Params::precompute_verifier()` creates the object.
 #[derive(Clone)]
-pub struct TranscriptVerifier<C: Pairing> {
+pub struct Verifier<C: Pairing> {
+    config: Config<C>,
     domain_size_n: BarycentricDomain<C::ScalarField>,
     domain_size_t: BarycentricDomain<C::ScalarField>,
 }
 
-impl<C: Pairing> TranscriptVerifier<C> {
-    pub fn new(n: usize, t: usize) -> Self {
-        let fft_domain = GeneralEvaluationDomain::new(n).unwrap();
-        Self::new_with_domain(fft_domain, n, t)
-    }
-
+impl<C: Pairing> Verifier<C> {
     /// TODO: 1. can be computed faster
     /// TODO: 2. can keep lis_at_0
     /// TODO: 3. lis_at_0 can be computed faster
-    pub fn new_with_domain<D: EvaluationDomain<C::ScalarField>>(fft_domain: D, n: usize, t: usize) -> Self {
-        assert!(fft_domain.size() >= n);
-        assert!(n >= t);
-        assert!(t > 0);
+    pub fn new(config: Config<C>) -> Self {
         let _t = start_timer!(|| "Interpolation");
-        let domain_size_n = BarycentricDomain::of_size(fft_domain, n);
-        let domain_size_t = BarycentricDomain::of_size(fft_domain, t);
+        let domain_size_n = BarycentricDomain::of_size(config.domain, config.n);
+        let domain_size_t = BarycentricDomain::of_size(config.domain, config.t);
         end_timer!(_t);
         Self {
+            config,
             domain_size_n,
             domain_size_t,
         }
@@ -65,7 +51,7 @@ impl<C: Pairing> TranscriptVerifier<C> {
 
     // TODO: check params
     #[must_use]
-    pub fn verify<D: EvaluationDomain<C::ScalarField>, R: Rng>(&self, ss: &SecretSharingWithWitness<C>, params: &Params<C, D>, rng: &mut R) -> Result<(),()> {
+    pub fn verify<R: Rng>(&self, ss: &SecretSharingWithWitness<C>, signer_pks: &[C::G2Affine], rng: &mut R) -> Result<(),()> {
         let payload = &ss.payload;
 
         // 1, 2, 3, 4
@@ -79,8 +65,8 @@ impl<C: Pairing> TranscriptVerifier<C> {
         let (lis_size_t_at_z, lis_size_t_at_0) = {
             let mut lis_size_t_at_z = self.domain_size_t.lagrange_basis_at(z);
             let mut lis_size_t_at_0 = self.domain_size_t.lagrange_basis_at(C::ScalarField::zero());
-            lis_size_t_at_z.resize(params.n, C::ScalarField::zero());
-            lis_size_t_at_0.resize(params.n, C::ScalarField::zero());
+            lis_size_t_at_z.resize(self.config.n, C::ScalarField::zero());
+            lis_size_t_at_0.resize(self.config.n, C::ScalarField::zero());
             (lis_size_t_at_z, lis_size_t_at_0)
         };
         end_timer!(_t);
@@ -96,12 +82,12 @@ impl<C: Pairing> TranscriptVerifier<C> {
         let _t = start_timer!(|| "1xG1 + 2xG2 MSMs");
         let a_term = C::G1::msm(&ss.a, &a_coeffs).unwrap();
         let bgpk_at_z = C::G2::msm(&payload.bgpk, &lis_size_n_at_z).unwrap();
-        let pk_at_z = C::G2::msm(&params.signer_pks, &lis_size_n_at_z).unwrap();
+        let pk_at_z = C::G2::msm(&signer_pks, &lis_size_n_at_z).unwrap();
         end_timer!(_t);
 
         if C::multi_pairing(
-            &[a_term + payload.c * r2 + payload.h1 * r3, -params.g1, payload.h1.into()],
-            &[params.g2, bgpk_at_z + payload.h2 * r3, pk_at_z],
+            &[a_term + payload.c * r2 + payload.h1 * r3, -self.config.g1, payload.h1.into()],
+            &[self.config.g2, bgpk_at_z + payload.h2 * r3, pk_at_z],
         ).is_zero() {
             Ok(())
         } else {

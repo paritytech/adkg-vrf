@@ -1,6 +1,6 @@
 use crate::dkg;
 use crate::dkg::{ContributionReceipt, Transcript};
-use crate::pvss::{SecretSharingWithWitness, TranscriptVerifier};
+use crate::pvss::{SecretSharingWithWitness, Verifier};
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
@@ -16,7 +16,7 @@ pub struct TranscriptAggregator<C: Pairing> {
 
     agg_ss: Option<SecretSharingWithWitness<C>>,
     receipts: HashMap<ContributionReceipt<C>, u32>,
-    pvss_verifier: TranscriptVerifier<C>,
+    pvss_verifier: Verifier<C>,
 }
 
 impl<C: Pairing> TranscriptAggregator<C>
@@ -25,7 +25,7 @@ where
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
     pub fn new(dkg: dkg::Dkg<C>, dealer_pks: Vec<C::G1Affine>) -> Self {
-        let pvss_verifier = dkg.pvss.precompute_verifier();
+        let pvss_verifier = Verifier::new(dkg.pvss.config.clone());
         Self {
             dkg,
             dealer_pks: dealer_pks.iter().copied().collect(),
@@ -60,7 +60,7 @@ where
         }
 
         transcript.check_consistency()?;
-        self.pvss_verifier.verify(&transcript.agg_ss, &self.dkg.pvss, rng)?;
+        self.pvss_verifier.verify(&transcript.agg_ss, &self.dkg.pvss.signer_pks, rng)?;
 
         for (r, w) in new_receipts {
             *self.receipts.entry(r.clone()).or_insert(0) += w;
