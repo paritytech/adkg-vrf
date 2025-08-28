@@ -6,11 +6,10 @@ use crate::{pvss, ThresholdCrypto};
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
-use ark_ec::{CurveGroup, PrimeGroup, VariableBaseMSM};
+use ark_ec::CurveGroup;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 use hashbrown::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use transcript::{ContributionReceipt, Transcript};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

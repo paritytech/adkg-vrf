@@ -51,7 +51,7 @@ impl<C: Pairing> Verifier<C> {
 
     // TODO: check params
     #[must_use]
-    pub fn verify<R: Rng>(&self, ss: &SecretSharingWithWitness<C>, signer_pks: &[C::G2Affine], rng: &mut R) -> Result<(),()> {
+    pub fn verify<R: Rng>(&self, ss: &SecretSharingWithWitness<C>, signer_pks: &[C::G2Affine], rng: &mut R) -> Result<(), ()> {
         let payload = &ss.payload;
 
         // 1, 2, 3, 4
@@ -80,9 +80,12 @@ impl<C: Pairing> Verifier<C> {
             .collect();
 
         let _t = start_timer!(|| "1xG1 + 2xG2 MSMs");
-        let a_term = C::G1::msm(&ss.a, &a_coeffs).unwrap();
-        let bgpk_at_z = C::G2::msm(&payload.bgpk, &lis_size_n_at_z).unwrap();
-        let pk_at_z = C::G2::msm(&signer_pks, &lis_size_n_at_z).unwrap();
+        let a_term = C::G1::msm(&ss.a, &a_coeffs)
+            .map_or_else(|_err| Err(()), |x| Ok(x))?;
+        let bgpk_at_z = C::G2::msm(&payload.bgpk, &lis_size_n_at_z)
+            .map_or_else(|_err| Err(()), |x| Ok(x))?;
+        let pk_at_z = C::G2::msm(&signer_pks, &lis_size_n_at_z)
+            .map_or_else(|_err| Err(()), |x| Ok(x))?;
         end_timer!(_t);
 
         if C::multi_pairing(
