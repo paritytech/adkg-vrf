@@ -20,6 +20,26 @@ pub struct Dkg<C: Pairing> {
     pub t_dkg: usize,
 }
 
+/// A dealer not interested in further participation in the protocol (aggregating transcripts) can call this.
+pub fn deal_and_sign<C: Pairing, R: Rng>(pvss: &pvss::Params<C>, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Transcript<C>
+where
+    <C::G2 as CurveGroup>::Config: WBConfig,
+    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
+{
+    let ssk = C::ScalarField::rand(rng);
+    let sh = C::ScalarField::rand(rng);
+    let ss = pvss.deal_secrets(ssk, sh, rng);
+    let receipt = ContributionReceipt::<C>::sign(
+        (ssk, ss.payload.c),
+        (sh, ss.payload.h1),
+        dealer,
+    );
+    Transcript {
+        agg_ss: ss,
+        receipts: vec![(receipt, 1)],
+    }
+}
+
 impl<C: Pairing> Dkg<C>
 where
     <C::G2 as CurveGroup>::Config: WBConfig,
@@ -39,18 +59,7 @@ where
     }
 
     pub fn deal_and_sign<R: Rng>(&self, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Transcript<C> {
-        let ssk = C::ScalarField::rand(rng);
-        let sh = C::ScalarField::rand(rng);
-        let pvss = self.pvss.deal_secrets(ssk, sh, rng);
-        let receipt = ContributionReceipt::sign(
-            (ssk, pvss.payload.c),
-            (sh, pvss.payload.h1),
-            dealer,
-        );
-        Transcript {
-            agg_ss: pvss,
-            receipts: vec![(receipt, 1)],
-        }
+        deal_and_sign(&self.pvss, rng, dealer)
     }
 
     pub fn verify<R: Rng>(
@@ -95,11 +104,11 @@ where
         self.contributed_dealers(t).len() >= self.t_dkg
     }
 
-    pub fn finalize<R: Rng>(self, t: Transcript<C>, rng: &mut R) -> Result<ThresholdCrypto<C>,()> {
+    pub fn finalize<R: Rng>(self, t: Transcript<C>, rng: &mut R) -> Result<ThresholdCrypto<C>, ()> {
         let v = pvss::Verifier::new(self.pvss.config.clone());
         self.verify(&t, &v, rng)?;
         if !self.enough_dealers(&t) {
-            return Err(())
+            return Err(());
         }
         Ok(ThresholdCrypto {
             secret_sharing: t.agg_ss.payload,
