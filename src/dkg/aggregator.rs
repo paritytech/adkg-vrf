@@ -1,6 +1,6 @@
 use crate::dkg;
 use crate::dkg::transcript::{ContributionReceipt, Transcript};
-use crate::pvss::{SecretSharingWithWitness, Verifier};
+use crate::pvss::SecretSharingWithWitness;
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
@@ -16,7 +16,6 @@ pub struct TranscriptAggregator<C: Pairing> {
 
     agg_ss: Option<SecretSharingWithWitness<C>>,
     receipts: HashMap<ContributionReceipt<C>, u32>,
-    pvss_verifier: Verifier<C>,
 }
 
 impl<C: Pairing> TranscriptAggregator<C>
@@ -25,13 +24,11 @@ where
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
     pub fn new(dkg: dkg::Dkg<C>, dealer_pks: Vec<C::G1Affine>) -> Self {
-        let pvss_verifier = Verifier::new(dkg.pvss.config.clone());
         Self {
             dkg,
             dealer_pks: dealer_pks.iter().copied().collect(),
             agg_ss: None,
             receipts: Default::default(),
-            pvss_verifier,
         }
     }
 
@@ -60,7 +57,7 @@ where
         }
 
         transcript.check_consistency()?;
-        self.pvss_verifier.verify(&transcript.agg_ss, &self.dkg.pvss.signer_pks, rng)?;
+        self.dkg.verifier.verify(&transcript.agg_ss, &self.dkg.pvss.signer_pks, rng)?;
 
         for (r, w) in new_receipts {
             *self.receipts.entry(r.clone()).or_insert(0) += w;
@@ -115,9 +112,9 @@ mod tests {
             .collect();
 
         let dkg = Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
-        let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1());
-        let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1());
-        let ss3 = dkg.deal_and_sign(rng, dealers[2].pk_in_g1());
+        let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1()).unwrap();
+        let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1()).unwrap();
+        let ss3 = dkg.deal_and_sign(rng, dealers[2].pk_in_g1()).unwrap();
 
         let agg = BlsTranscriptAggregator::new(dkg.clone(), dealer_pks);
 
@@ -136,7 +133,7 @@ mod tests {
         // 3. can aggregate 2 singletons
         assert!(agg1.add(ss2, rng).is_ok());
         let ss12 = agg1.get_transcript();
-        assert!(dkg.verify(&ss12, &agg.pvss_verifier, rng).is_ok());
+        assert!(dkg.verify(&ss12, rng).is_ok());
         assert_eq!(ss12.receipts.len(), 2);
 
         // 4. can aggregate 123 = 12 + 3
@@ -144,13 +141,13 @@ mod tests {
         assert!(agg2.add(ss12, rng).is_ok());
         assert!(agg2.add(ss3, rng).is_ok());
         let ss123 = agg2.get_transcript();
-        assert!(dkg.verify(&ss123, &agg.pvss_verifier, rng).is_ok());
+        assert!(dkg.verify(&ss123, rng).is_ok());
         assert_eq!(ss123.receipts.len(), 3);
 
         // 5. 12 + 123
         assert!(agg1.add(ss123, rng).is_ok());
         let ss = agg1.get_transcript();
-        assert!(dkg.verify(&ss, &agg.pvss_verifier, rng).is_ok());
+        assert!(dkg.verify(&ss, rng).is_ok());
         assert_eq!(ss.receipts.len(), 3);
         assert_eq!(ss.receipts.iter().map(|(_, w)| w).sum::<u32>(), 5);  // TODO: map
 

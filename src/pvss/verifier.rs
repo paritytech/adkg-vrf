@@ -3,6 +3,7 @@ use crate::utils::BarycentricDomain;
 use ark_ec::pairing::Pairing;
 use ark_ec::VariableBaseMSM;
 use ark_ff::{Field, One, Zero};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::vec::Vec;
 use ark_std::{end_timer, start_timer, UniformRand};
@@ -10,7 +11,7 @@ use derivative::Derivative;
 
 /// Precomputed barycentric weights to facilitate interpolation.
 /// Depend only on `(t,n)` so can be reused between the ceremonies.
-#[derive(Derivative)]
+#[derive(Derivative, CanonicalSerialize, CanonicalDeserialize)]
 #[derivative(Clone, Debug)]
 pub struct Verifier<C: Pairing> {
     config: Config<C>,

@@ -145,17 +145,16 @@ mod tests {
             .collect();
 
         let dkg = Dkg::<Bls12_381>::new(signers_pks.clone(), t, dealer_pks.clone(), dealer_pks.len()).unwrap();
-        let pvss_verifier = pvss::Verifier::new(dkg.pvss.config.clone());
 
         let transcripts: Vec<Transcript<Bls12_381>> = dealers.into_iter()
-            .map(|dealer| dkg.deal_and_sign(rng, (dealer.sk, dealer.bls_pk_g1)))
+            .map(|dealer| dkg.deal_and_sign(rng, (dealer.sk, dealer.bls_pk_g1)).unwrap())
             .collect();
 
-        assert!(dkg.verify(&transcripts[0], &pvss_verifier, rng).is_ok());
+        assert!(dkg.verify(&transcripts[0], rng).is_ok());
 
         let agg_transcript = Dkg::<Bls12_381>::aggregate(transcripts);
 
-        assert!(dkg.verify(&agg_transcript, &pvss_verifier, rng).is_ok());
+        assert!(dkg.verify(&agg_transcript, rng).is_ok());
 
         let keys = dkg.finalize(agg_transcript, rng).unwrap();
 

@@ -12,11 +12,17 @@ use ark_std::UniformRand;
 use hashbrown::{HashMap, HashSet};
 use transcript::{ContributionReceipt, Transcript};
 
+/// Fully defines a protocol instance.
 #[derive(Clone, Debug)]
 pub struct Dkg<C: Pairing> {
+    /// PVSS parameters, including the list of signers.
     pub pvss: pvss::Params<C>,
+    /// Authorized dealers.
     pub dealer_pks: HashSet<C::G1Affine>,
+    /// Verifies `SecretSharing`s produced by PVSS.
     pub verifier: pvss::Verifier<C>,
+    /// This many of the authorized dealers has to participate to produce a "secure" transcript.
+    /// With 2/3-honesty assumption, t_dkg = (1/3 + 1) of dealers
     pub t_dkg: usize,
 }
 
@@ -45,18 +51,19 @@ where
     <C::G2 as CurveGroup>::Config: WBConfig,
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
-    pub fn from_pvss(pvss: pvss::Params<C>, dealer_pks: Vec<C::G1Affine>, t_dkg: usize) -> Result<Self, ()> {
+    pub fn from_pvss(pvss: pvss::Params<C>, dealer_pks: Vec<C::G1Affine>, t_dkg: usize, verifier: pvss::Verifier<C>) -> Result<Self, ()> {
         let dealer_pks: HashSet<_> = dealer_pks.into_iter().collect();
         if t_dkg == 0 || t_dkg > dealer_pks.len() {
             return Err(());
         }
-        let verifier = pvss::Verifier::new(pvss.config.clone());
         Ok(Self { pvss, dealer_pks, verifier, t_dkg })
     }
 
+    /// This method creates a new `pvss::Verifier`, so use `Self::from_pvss` if you have a compatible one.
     pub fn new(signer_pks: Vec<C::G2Affine>, t_pvss: usize, dealer_pks: Vec<C::G1Affine>, t_dkg: usize) -> Result<Self, ()> {
         let pvss = pvss::Params::<C>::new(signer_pks, t_pvss)?;
-        Self::from_pvss(pvss, dealer_pks, t_dkg)
+        let verifier = pvss::Verifier::new(pvss.config.clone());
+        Self::from_pvss(pvss, dealer_pks, t_dkg, verifier)
     }
 
     pub fn deal_and_sign<R: Rng>(&self, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Result<Transcript<C>, ()> {
@@ -141,8 +148,8 @@ mod tests {
             .collect();
 
         let dkg = Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
-        let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1());
-        let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1());
+        let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1()).unwrap();
+        let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1()).unwrap();
         let agg_ss = BlsDkg::aggregate(vec![ss1.clone(), ss1, ss2]);
         assert_eq!(agg_ss.receipts.len(), 2);
         // assert_eq!(agg_ss.receipts[0].1, 2); //TODO

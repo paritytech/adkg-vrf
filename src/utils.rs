@@ -1,6 +1,7 @@
 use ark_ff::{FftField, Field};
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{DenseUVPolynomial, EvaluationDomain};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{end_timer, iter, start_timer};
 use ark_std::{vec, vec::Vec};
 
@@ -39,7 +40,7 @@ fn diff<F: Field>(f: &DensePolynomial<F>) -> DensePolynomial<F> {
 /// A set of interpolation points together with the precomputed weights.
 /// The points don't have to form a multiplicative group.
 /// After the weights are computed, evaluating an interpolant at a point takes `O(n)`.
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BarycentricDomain<F: Field> {
     /// Interpolation points `x_1,...,x_n`.
     xs: Vec<F>,
