@@ -1,19 +1,22 @@
+use crate::pvss::{Config, SecretSharingWithWitness};
+use crate::utils::BarycentricDomain;
 use ark_ec::pairing::Pairing;
 use ark_ec::VariableBaseMSM;
 use ark_ff::{Field, One, Zero};
 use ark_std::rand::Rng;
 use ark_std::vec::Vec;
 use ark_std::{end_timer, start_timer, UniformRand};
-
-use crate::pvss::{Config, SecretSharingWithWitness};
-use crate::utils::BarycentricDomain;
+use derivative::Derivative;
 
 /// Precomputed barycentric weights to facilitate interpolation.
 /// Depend only on `(t,n)` so can be reused between the ceremonies.
-#[derive(Clone)]
+#[derive(Derivative)]
+#[derivative(Clone, Debug)]
 pub struct Verifier<C: Pairing> {
     config: Config<C>,
+    #[derivative(Debug="ignore")]
     domain_size_n: BarycentricDomain<C::ScalarField>,
+    #[derivative(Debug="ignore")]
     domain_size_t: BarycentricDomain<C::ScalarField>,
 }
 

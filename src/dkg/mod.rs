@@ -12,10 +12,11 @@ use ark_std::UniformRand;
 use hashbrown::{HashMap, HashSet};
 use transcript::{ContributionReceipt, Transcript};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Dkg<C: Pairing> {
     pub pvss: pvss::Params<C>,
     pub dealer_pks: HashSet<C::G1Affine>,
+    pub verifier: pvss::Verifier<C>,
     pub t_dkg: usize,
 }
 
@@ -49,7 +50,8 @@ where
         if t_dkg == 0 || t_dkg > dealer_pks.len() {
             return Err(());
         }
-        Ok(Self { pvss, dealer_pks, t_dkg })
+        let verifier = pvss::Verifier::new(pvss.config.clone());
+        Ok(Self { pvss, dealer_pks, verifier, t_dkg })
     }
 
     pub fn new(signer_pks: Vec<C::G2Affine>, t_pvss: usize, dealer_pks: Vec<C::G1Affine>, t_dkg: usize) -> Result<Self, ()> {
@@ -64,7 +66,6 @@ where
     pub fn verify<R: Rng>(
         &self,
         transcript: &Transcript<C>,
-        pvss_verifier: &pvss::Verifier<C>,
         rng: &mut R,
     ) -> Result<(), ()>
     where
@@ -76,7 +77,7 @@ where
             r.verify_all_sigs()?;
         }
         transcript.check_consistency()?;
-        pvss_verifier.verify(&transcript.agg_ss, &self.pvss.signer_pks, rng)?;
+        self.verifier.verify(&transcript.agg_ss, &self.pvss.signer_pks, rng)?;
         Ok(())
     }
 
@@ -104,8 +105,7 @@ where
     }
 
     pub fn finalize<R: Rng>(self, t: Transcript<C>, rng: &mut R) -> Result<ThresholdCrypto<C>, ()> {
-        let v = pvss::Verifier::new(self.pvss.config.clone());
-        self.verify(&t, &v, rng)?;
+        self.verify(&t, rng)?;
         if !self.enough_dealers(&t) {
             return Err(());
         }
