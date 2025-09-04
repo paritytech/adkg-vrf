@@ -5,6 +5,10 @@ use crate::pvss::SecretSharing;
 use ark_ec::pairing::Pairing;
 use dkg::transcript;
 
+pub mod agg;
+pub mod bls;
+pub mod dkg;
+pub mod koe;
 /// Threshold Verifiable Unpredictable Function (VUF) scheme.
 /// Produces an unpredictable output by aggregating a threshold number of vanilla BLS signatures on the input.
 ///
@@ -26,13 +30,9 @@ use dkg::transcript;
 
 /// Aggregatable Publicly Verifiable Secret Sharing Scheme
 mod old_dkg;
-pub mod utils;
-pub mod koe;
-pub mod agg;
-pub mod bls;
-pub mod straus;
 pub mod pvss;
-pub mod dkg;
+pub mod straus;
+pub mod utils;
 
 pub struct ThresholdCrypto<C: Pairing> {
     secret_sharing: SecretSharing<C>,
@@ -89,8 +89,12 @@ mod tests {
     use ark_std::vec::Vec;
     use hashbrown::HashMap;
 
-    pub fn aggregator<C: Pairing>(signer_pks: &[C::G2Affine], bgpks: Vec<C::G2Affine>) -> crate::agg::SignatureAggregator<C> {
-        let pks: HashMap<_, _> = signer_pks.iter()
+    pub fn aggregator<C: Pairing>(
+        signer_pks: &[C::G2Affine],
+        bgpks: Vec<C::G2Affine>,
+    ) -> crate::agg::SignatureAggregator<C> {
+        let pks: HashMap<_, _> = signer_pks
+            .iter()
             .cloned()
             .zip(bgpks)
             .enumerate()
@@ -102,7 +106,10 @@ mod tests {
         }
     }
 
-    pub fn aggregate_augmented_sigs<C: Pairing>(augmented_sigs: Vec<Option<AggThresholdSig<C>>>, config: &pvss::Config<C>) -> AggThresholdSig<C> {
+    pub fn aggregate_augmented_sigs<C: Pairing>(
+        augmented_sigs: Vec<Option<AggThresholdSig<C>>>,
+        config: &pvss::Config<C>,
+    ) -> AggThresholdSig<C> {
         assert_eq!(augmented_sigs.len(), config.n);
         let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
         bitmask.resize(config.domain.size(), false);
@@ -110,11 +117,16 @@ mod tests {
         assert!(set_bits_count >= config.t);
         let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
             .lagrange_basis_at(C::ScalarField::zero());
-        let augmented_sigs: Vec<AggThresholdSig<C>> = augmented_sigs.into_iter()
-            .flatten()
+        let augmented_sigs: Vec<AggThresholdSig<C>> =
+            augmented_sigs.into_iter().flatten().collect();
+        let bls_sigs: Vec<_> = augmented_sigs
+            .iter()
+            .map(|s| s.bls_sig_with_pk.sig)
             .collect();
-        let bls_sigs: Vec<_> = augmented_sigs.iter().map(|s| s.bls_sig_with_pk.sig).collect();
-        let bls_pks: Vec<_> = augmented_sigs.iter().map(|s| s.bls_sig_with_pk.pk).collect();
+        let bls_pks: Vec<_> = augmented_sigs
+            .iter()
+            .map(|s| s.bls_sig_with_pk.pk)
+            .collect();
         let bgpks: Vec<_> = augmented_sigs.iter().map(|s| s.bgpk).collect();
         let asig = C::G1::msm(&bls_sigs, &lis).unwrap().into_affine();
         let apk = C::G2::msm(&bls_pks, &lis).unwrap().into_affine();
@@ -130,24 +142,22 @@ mod tests {
         let rng = &mut test_rng();
 
         let (n, t) = (7, 5);
-        let signers: Vec<BlsSigner<Bls12_381>> = (0..n)
-            .map(|_| BlsSigner::new(rng))
-            .collect();
-        let signers_pks: Vec<_> = signers.iter()
-            .map(|s| s.bls_pk_g2)
-            .collect();
+        let signers: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
+        let signers_pks: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
 
-        let dealers: Vec<_> = (0..3)
-            .map(|_| BlsSigner::<Bls12_381>::new(rng))
-            .collect();
-        let dealer_pks: Vec<G1Affine> = dealers.iter()
-            .map(|d| d.bls_pk_g1)
-            .collect();
+        let dealers: Vec<_> = (0..3).map(|_| BlsSigner::<Bls12_381>::new(rng)).collect();
+        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.bls_pk_g1).collect();
 
-        let dkg = Dkg::<Bls12_381>::new(signers_pks.clone(), t, dealer_pks.clone(), dealer_pks.len()).unwrap();
+        let dkg =
+            Dkg::<Bls12_381>::new(signers_pks.clone(), t, dealer_pks.clone(), dealer_pks.len())
+                .unwrap();
 
-        let transcripts: Vec<Transcript<Bls12_381>> = dealers.into_iter()
-            .map(|dealer| dkg.deal_and_sign(rng, (dealer.sk, dealer.bls_pk_g1)).unwrap())
+        let transcripts: Vec<Transcript<Bls12_381>> = dealers
+            .into_iter()
+            .map(|dealer| {
+                dkg.deal_and_sign(rng, (dealer.sk, dealer.bls_pk_g1))
+                    .unwrap()
+            })
             .collect();
 
         assert!(dkg.verify(&transcripts[0], rng).is_ok());
@@ -163,9 +173,7 @@ mod tests {
         let sig_aggregator = aggregator::<Bls12_381>(&signers_pks, keys.secret_sharing.bgpk);
 
         let message = G1Projective::generator();
-        let sigs: Vec<_> = signers.iter()
-            .map(|s| s.sign_g1(message))
-            .collect();
+        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(message)).collect();
 
         let mut sig_agg_session_n = sig_aggregator.start_session(message.into_affine());
         sig_agg_session_n.append_verify_sigs(sigs.clone());
@@ -181,4 +189,3 @@ mod tests {
         assert_eq!(vuf_t, vuf_n);
     }
 }
-

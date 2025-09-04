@@ -16,33 +16,32 @@ fn table<C: AffineRepr>(points: &[C], w: u32) -> Vec<C> {
     let mut table = vec![C::Group::zero()];
     for p in points {
         // P, 2P, ..., (c-1)P, where c = 2^w
-        let multiples_of_p: Vec<C::Group> = iter::successors(Some(p.into_group()), move |prev| Some(*p + *prev))
-            .take(c - 1)
-            .collect();
+        let multiples_of_p: Vec<C::Group> =
+            iter::successors(Some(p.into_group()), move |prev| Some(*p + *prev))
+                .take(c - 1)
+                .collect();
         // TODO: batchconvert to affine?
-        let new_rows: Vec<C::Group> = multiples_of_p.iter()
-            .flat_map(|&kp| {
-                table.iter()
-                    .map(move |&prev_row| prev_row + kp)
-            })
+        let new_rows: Vec<C::Group> = multiples_of_p
+            .iter()
+            .flat_map(|&kp| table.iter().map(move |&prev_row| prev_row + kp))
             .collect();
         table.extend(new_rows)
     }
     C::Group::normalize_batch(&table)
 }
 
-fn bits_to_digit<I: Iterator<Item=bool>>(bits: I, powers_of_2: &[u32]) -> u32 {
+fn bits_to_digit<I: Iterator<Item = bool>>(bits: I, powers_of_2: &[u32]) -> u32 {
     bits.zip(powers_of_2.iter())
         .filter_map(|(bit, power)| bit.then_some(power))
         .sum::<u32>()
 }
 
-fn digits_to_index<I: Iterator<Item=u32>>(digits: I, powers_of_c: &[u32]) -> usize {
-    digits.zip(powers_of_c.iter())
+fn digits_to_index<I: Iterator<Item = u32>>(digits: I, powers_of_c: &[u32]) -> usize {
+    digits
+        .zip(powers_of_c.iter())
         .map(|(digit, power)| digit * power)
         .sum::<u32>() as usize
 }
-
 
 /// Converts `bits` highlighting a subset of the points to the index at which the sum of the subset is located in the table.
 // The powers of `2` should start from `1`, so the least significant bit goes first.
@@ -57,11 +56,7 @@ fn digits_to_index<I: Iterator<Item=u32>>(digits: I, powers_of_c: &[u32]) -> usi
 fn to_msbf_bits_padded<F: PrimeField>(scalar: F, w: usize) -> Vec<bool> {
     let repr_bit_len = F::BigInt::NUM_LIMBS * 64;
     let extra_bits = repr_bit_len % w;
-    let padding_len = if extra_bits == 0 {
-        0
-    } else {
-        w - extra_bits
-    };
+    let padding_len = if extra_bits == 0 { 0 } else { w - extra_bits };
     iter::repeat(false)
         .take(padding_len)
         .chain(BitIteratorBE::new(scalar.into_bigint()))
@@ -73,7 +68,8 @@ fn to_base_c_digits<F: PrimeField>(scalars: &[F], w: usize) -> Vec<Vec<u32>> {
         .take(w)
         .collect::<Vec<_>>();
 
-    scalars.iter()
+    scalars
+        .iter()
         .map(|&s| {
             to_msbf_bits_padded(s, w)
                 .chunks(w)
@@ -95,18 +91,23 @@ fn indices<F: PrimeField>(scalars: &[F], w: usize) -> Vec<usize> {
     let skip = 0;
     // let scalar_bit_len = F::MODULUS_BIT_SIZE as usize;
     // let skip = repr_bit_len - scalar_bit_len;
-    (skip..scalars_base_c[0].len()).map(|i| {
-        let slice = scalars_base_c.iter()
-            .map(|s| s[i]);
-        digits_to_index(slice, &powers_of_c)
-    }).collect()
+    (skip..scalars_base_c[0].len())
+        .map(|i| {
+            let slice = scalars_base_c.iter().map(|s| s[i]);
+            digits_to_index(slice, &powers_of_c)
+        })
+        .collect()
 }
 
 pub fn short_msm<C: AffineRepr>(points: &[C], scalars: &[C::ScalarField]) -> C::Group {
     short_msm_windowed(points, scalars, 1)
 }
 
-pub fn short_msm_windowed<C: AffineRepr>(points: &[C], scalars: &[C::ScalarField], w: usize) -> C::Group {
+pub fn short_msm_windowed<C: AffineRepr>(
+    points: &[C],
+    scalars: &[C::ScalarField],
+    w: usize,
+) -> C::Group {
     let _t_table = start_timer!(|| "Points");
     let table = table(points, w as u32);
     end_timer!(_t_table);
@@ -114,8 +115,7 @@ pub fn short_msm_windowed<C: AffineRepr>(points: &[C], scalars: &[C::ScalarField
     let indices = indices(scalars, w);
     end_timer!(_t_indices);
     let mut acc = C::Group::zero();
-    for idx in indices.into_iter().skip_while(|&idx| idx == 0)
-    {
+    for idx in indices.into_iter().skip_while(|&idx| idx == 0) {
         for _ in 0..w {
             acc.double_in_place();
         }
@@ -124,7 +124,10 @@ pub fn short_msm_windowed<C: AffineRepr>(points: &[C], scalars: &[C::ScalarField
     acc
 }
 
-fn glv_decomposition<C: GLVConfig>(p: Affine<C>, s: C::ScalarField) -> Vec<(Affine<C>, C::ScalarField)> {
+fn glv_decomposition<C: GLVConfig>(
+    p: Affine<C>,
+    s: C::ScalarField,
+) -> Vec<(Affine<C>, C::ScalarField)> {
     let ((sgn_s1, s1), (sgn_s2, s2)) = C::scalar_decomposition(s);
     let mut p2 = C::endomorphism_affine(&p);
     let mut p1 = p;
@@ -137,10 +140,14 @@ fn glv_decomposition<C: GLVConfig>(p: Affine<C>, s: C::ScalarField) -> Vec<(Affi
     vec![(p1, s1), (p2, s2)]
 }
 
-pub fn short_msm_glv<C: GLVConfig>(points: &[Affine<C>], scalars: &[C::ScalarField]) -> Projective<C> {
+pub fn short_msm_glv<C: GLVConfig>(
+    points: &[Affine<C>],
+    scalars: &[C::ScalarField],
+) -> Projective<C> {
     assert_eq!(points.len(), scalars.len());
     let _t_glv = start_timer!(|| format!("{} GLV decompositions", points.len()));
-    let (glv_points, glv_scalars): (Vec<Affine<C>>, Vec<C::ScalarField>) = points.iter()
+    let (glv_points, glv_scalars): (Vec<Affine<C>>, Vec<C::ScalarField>) = points
+        .iter()
         .zip(scalars)
         .flat_map(|(p, s)| glv_decomposition(*p, *s))
         .unzip();
@@ -163,15 +170,10 @@ mod tests {
         let scalars = (0..n)
             .map(|_| C::ScalarField::rand(rng))
             .collect::<Vec<_>>();
-        let points = (0..n)
-            .map(|_| Affine::<C>::rand(rng))
-            .collect::<Vec<_>>();
+        let points = (0..n).map(|_| Affine::<C>::rand(rng)).collect::<Vec<_>>();
 
         let _t_naive = start_timer!(|| format!("Naive {}-msm", n));
-        let res: Projective<C> = points.iter()
-            .zip(scalars.iter())
-            .map(|(&p, s)| p * s)
-            .sum();
+        let res: Projective<C> = points.iter().zip(scalars.iter()).map(|(&p, s)| p * s).sum();
         end_timer!(_t_naive);
         println!();
 

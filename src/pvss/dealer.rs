@@ -17,7 +17,12 @@ impl<C: Pairing> Params<C> {
 
     /// Samples a random degree `t-1` polynomial `f` with constant term `ssk` (in other words, `f(0) = ssk`)
     /// and shares the secret `ssk.g2` using `f`. `(h1 = sh.g1, h2 = sh.g2)`.
-    pub fn deal_secrets<R: Rng>(&self, ssk: C::ScalarField, sh: C::ScalarField, rng: &mut R) -> Result<SecretSharingWithWitness<C>, ()> {
+    pub fn deal_secrets<R: Rng>(
+        &self,
+        ssk: C::ScalarField,
+        sh: C::ScalarField,
+        rng: &mut R,
+    ) -> Result<SecretSharingWithWitness<C>, ()> {
         let t = self.config.t;
         let mut coeffs = Vec::with_capacity(t);
         coeffs.push(ssk); // constant term
@@ -28,7 +33,11 @@ impl<C: Pairing> Params<C> {
         self._deal(f, sh)
     }
 
-    fn _deal(&self, f_mon: DensePolynomial<C::ScalarField>, sh: C::ScalarField) -> Result<SecretSharingWithWitness<C>, ()> {
+    fn _deal(
+        &self,
+        f_mon: DensePolynomial<C::ScalarField>,
+        sh: C::ScalarField,
+    ) -> Result<SecretSharingWithWitness<C>, ()> {
         let ssk = f_mon[0];
         if ssk.is_zero() || sh.is_zero() || f_mon.degree() != self.config.t - 1 {
             return Err(());
@@ -36,8 +45,10 @@ impl<C: Pairing> Params<C> {
         assert!(!ssk.is_zero());
         assert!(!sh.is_zero());
         assert_eq!(f_mon.degree(), self.config.t - 1);
-        let f_lag: Vec<C::ScalarField> = f_mon.evaluate_over_domain(self.config.domain)
-            .evals.into_iter()
+        let f_lag: Vec<C::ScalarField> = f_mon
+            .evaluate_over_domain(self.config.domain)
+            .evals
+            .into_iter()
             .take(self.config.n)
             .collect();
 
@@ -48,14 +59,13 @@ impl<C: Pairing> Params<C> {
         end_timer!(_t);
 
         let _t = start_timer!(|| "Key exchange");
-        let shared_secrets: Vec<_> = self.signer_pks.iter()
-            .map(|&pk_j| pk_j * sh)
-            .collect();
+        let shared_secrets: Vec<_> = self.signer_pks.iter().map(|&pk_j| pk_j * sh).collect();
         end_timer!(_t);
 
         // And now we just add the shared secrets to make the secret shares secret.
         let secret_shares = f_lag_g2;
-        let bgpk: Vec<_> = secret_shares.into_iter()
+        let bgpk: Vec<_> = secret_shares
+            .into_iter()
             .zip(shared_secrets)
             .map(|(share, delta)| share + delta)
             .collect();

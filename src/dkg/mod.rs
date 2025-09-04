@@ -27,7 +27,11 @@ pub struct Dkg<C: Pairing> {
 }
 
 /// A dealer not interested in further participation in the protocol (aggregating transcripts) can call this.
-pub fn deal_and_sign<C: Pairing, R: Rng>(pvss: &pvss::Params<C>, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Result<Transcript<C>, ()>
+pub fn deal_and_sign<C: Pairing, R: Rng>(
+    pvss: &pvss::Params<C>,
+    rng: &mut R,
+    dealer: (C::ScalarField, C::G1Affine),
+) -> Result<Transcript<C>, ()>
 where
     <C::G2 as CurveGroup>::Config: WBConfig,
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
@@ -35,11 +39,7 @@ where
     let ssk = C::ScalarField::rand(rng);
     let sh = C::ScalarField::rand(rng);
     let ss = pvss.deal_secrets(ssk, sh, rng)?;
-    let receipt = ContributionReceipt::<C>::sign(
-        (ssk, ss.payload.c),
-        (sh, ss.payload.h1),
-        dealer,
-    );
+    let receipt = ContributionReceipt::<C>::sign((ssk, ss.payload.c), (sh, ss.payload.h1), dealer);
     Ok(Transcript {
         agg_ss: ss,
         receipts: vec![(receipt, 1)],
@@ -51,32 +51,46 @@ where
     <C::G2 as CurveGroup>::Config: WBConfig,
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
-    pub fn from_pvss(pvss: pvss::Params<C>, dealer_pks: Vec<C::G1Affine>, t_dkg: usize, verifier: pvss::Verifier<C>) -> Result<Self, ()> {
+    pub fn from_pvss(
+        pvss: pvss::Params<C>,
+        dealer_pks: Vec<C::G1Affine>,
+        t_dkg: usize,
+        verifier: pvss::Verifier<C>,
+    ) -> Result<Self, ()> {
         if t_dkg == 0 || t_dkg > dealer_pks.len() || verifier.config != pvss.config {
             return Err(());
         }
-        let dealer_pks: HashSet<_> = dealer_pks.into_iter()
-            .collect();
+        let dealer_pks: HashSet<_> = dealer_pks.into_iter().collect();
 
-        Ok(Self { pvss, dealer_pks, verifier, t_dkg })
+        Ok(Self {
+            pvss,
+            dealer_pks,
+            verifier,
+            t_dkg,
+        })
     }
 
     /// This method creates a new `pvss::Verifier`, so use `Self::from_pvss` if you have a compatible one.
-    pub fn new(signer_pks: Vec<C::G2Affine>, t_pvss: usize, dealer_pks: Vec<C::G1Affine>, t_dkg: usize) -> Result<Self, ()> {
+    pub fn new(
+        signer_pks: Vec<C::G2Affine>,
+        t_pvss: usize,
+        dealer_pks: Vec<C::G1Affine>,
+        t_dkg: usize,
+    ) -> Result<Self, ()> {
         let pvss = pvss::Params::<C>::new(signer_pks, t_pvss)?;
         let verifier = pvss::Verifier::new(pvss.config.clone());
         Self::from_pvss(pvss, dealer_pks, t_dkg, verifier)
     }
 
-    pub fn deal_and_sign<R: Rng>(&self, rng: &mut R, dealer: (C::ScalarField, C::G1Affine)) -> Result<Transcript<C>, ()> {
+    pub fn deal_and_sign<R: Rng>(
+        &self,
+        rng: &mut R,
+        dealer: (C::ScalarField, C::G1Affine),
+    ) -> Result<Transcript<C>, ()> {
         deal_and_sign(&self.pvss, rng, dealer)
     }
 
-    pub fn verify<R: Rng>(
-        &self,
-        transcript: &Transcript<C>,
-        rng: &mut R,
-    ) -> Result<(), ()>
+    pub fn verify<R: Rng>(&self, transcript: &Transcript<C>, rng: &mut R) -> Result<(), ()>
     where
         <C::G2 as CurveGroup>::Config: WBConfig,
         WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
@@ -86,19 +100,22 @@ where
             r.verify_all_sigs()?;
         }
         transcript.check_consistency()?;
-        self.verifier.verify(&transcript.agg_ss, &self.pvss.signer_pks, rng)?;
+        self.verifier
+            .verify(&transcript.agg_ss, &self.pvss.signer_pks, rng)?;
         Ok(())
     }
 
     /// Merges `transcripts` into a new (aggregate) transcript.
     /// The result doesn't have duplicate receipts, or `0` weights.
     pub fn aggregate(transcripts: Vec<Transcript<C>>) -> Transcript<C> {
-        let (ss, receipts): (Vec<_>, Vec<_>) = transcripts.into_iter()
+        let (ss, receipts): (Vec<_>, Vec<_>) = transcripts
+            .into_iter()
             .map(|t| (t.agg_ss, t.receipts))
             .collect();
         let agg_ss = SecretSharingWithWitness::aggregate(&ss);
         let mut receipts_map: HashMap<ContributionReceipt<C>, u32> = HashMap::new();
-        receipts.into_iter()
+        receipts
+            .into_iter()
             .flatten()
             .filter(|(_r, w)| *w > 0)
             .for_each(|(r, w)| *receipts_map.entry(r).or_insert(0) += w);
@@ -107,8 +124,13 @@ where
     }
 
     fn authorized_contributions(&self, t: &Transcript<C>) -> HashSet<C::G1Affine> {
-        t.receipts.iter()
-            .filter_map(|r| self.dealer_pks.contains(&r.0.dealer_pk).then_some(r.0.dealer_pk))
+        t.receipts
+            .iter()
+            .filter_map(|r| {
+                self.dealer_pks
+                    .contains(&r.0.dealer_pk)
+                    .then_some(r.0.dealer_pk)
+            })
             .collect()
     }
 
@@ -142,17 +164,12 @@ mod tests {
 
         let (n, t) = (10, 7);
 
-        let dealers: Vec<_> = (0..3)
-            .map(|_| BlsSigner::<Bls12_381>::new(rng))
-            .collect();
-        let dealer_pks: Vec<G1Affine> = dealers.iter()
-            .map(|d| d.bls_pk_g1)
-            .collect();
-        let signers_pks: Vec<_> = (0..n)
-            .map(|_| G2Affine::rand(rng))
-            .collect();
+        let dealers: Vec<_> = (0..3).map(|_| BlsSigner::<Bls12_381>::new(rng)).collect();
+        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.bls_pk_g1).collect();
+        let signers_pks: Vec<_> = (0..n).map(|_| G2Affine::rand(rng)).collect();
 
-        let dkg = Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
+        let dkg =
+            Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
         let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1()).unwrap();
         let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1()).unwrap();
         let agg_ss = BlsDkg::aggregate(vec![ss1.clone(), ss1, ss2]);

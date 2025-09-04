@@ -39,7 +39,11 @@ where
     <C::G2 as CurveGroup>::Config: WBConfig,
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
-    pub fn sign(c: (C::ScalarField, C::G1Affine), h1: (C::ScalarField, C::G1Affine), dealer: (C::ScalarField, C::G1Affine)) -> Self {
+    pub fn sign(
+        c: (C::ScalarField, C::G1Affine),
+        h1: (C::ScalarField, C::G1Affine),
+        dealer: (C::ScalarField, C::G1Affine),
+    ) -> Self {
         let public_keys = (c.1, h1.1, dealer.1);
         let message_hash = hash_to_curve::<C::G2, _>(public_keys);
         Self {
@@ -62,7 +66,8 @@ where
         let g1 = C::G1::generator();
         if verify_on_point::<C>(self.sig_c, message_hash, self.c, g1)
             && verify_on_point::<C>(self.sig_h1, message_hash, self.h1, g1)
-            && verify_on_point::<C>(self.sig_pk, message_hash, self.dealer_pk, g1) {
+            && verify_on_point::<C>(self.sig_pk, message_hash, self.dealer_pk, g1)
+        {
             Ok(())
         } else {
             Err(())
@@ -89,16 +94,18 @@ impl<C: Pairing> Hash for ContributionReceipt<C> {
 
 impl<C: Pairing> Transcript<C> {
     pub fn list_dealers(&self) -> Vec<C::G1Affine> {
-        self.receipts.iter()
-            .map(|(r, _w)| r.dealer_pk)
-            .collect()
+        self.receipts.iter().map(|(r, _w)| r.dealer_pk).collect()
     }
 
     /// `c`s and `h1`s in the receipts sum up to `c` and `h1` in the secret sharing.
     pub fn check_consistency(&self) -> Result<(), ()> {
         let cs: Vec<_> = self.receipts.iter().map(|(r, _w)| r.c).collect();
         let h1s: Vec<_> = self.receipts.iter().map(|(r, _w)| r.h1).collect();
-        let ws: Vec<_> = self.receipts.iter().map(|(_, w)| C::ScalarField::from(*w)).collect();
+        let ws: Vec<_> = self
+            .receipts
+            .iter()
+            .map(|(_, w)| C::ScalarField::from(*w))
+            .collect();
         let c = C::G1::msm(&cs, &ws).unwrap();
         if c.into_affine() != self.agg_ss.payload.c {
             return Err(());

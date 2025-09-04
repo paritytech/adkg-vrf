@@ -26,10 +26,9 @@ use crate::utils::BarycentricDomain;
 ///
 /// *A fun property* of the scheme is that signers don't have to use (or even decrypt) their shares.
 /// Instead, anyone can blindly use the ciphertexts to produce proofs that the threshold number of signers have signed.
-
 pub mod dealer;
-pub mod verifier;
 pub mod transcript;
+pub mod verifier;
 
 //TODO: move bls_pks out?
 /// Parameters of an aPVSS instantiation.
@@ -98,7 +97,10 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
     }
 
     // TODO: args are not any more aggregatable
-    pub fn aggregate_augmented_sigs(&self, augmented_sigs: Vec<Option<AggThresholdSig<C>>>) -> AggThresholdSig<C> {
+    pub fn aggregate_augmented_sigs(
+        &self,
+        augmented_sigs: Vec<Option<AggThresholdSig<C>>>,
+    ) -> AggThresholdSig<C> {
         assert_eq!(augmented_sigs.len(), self.n);
         let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
         bitmask.resize(self.domain.size(), false);
@@ -106,11 +108,16 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
         assert!(set_bits_count >= self.t);
         let lis = BarycentricDomain::from_subset(self.domain, &bitmask)
             .lagrange_basis_at(C::ScalarField::zero());
-        let augmented_sigs: Vec<AggThresholdSig<C>> = augmented_sigs.into_iter()
-            .flatten()
+        let augmented_sigs: Vec<AggThresholdSig<C>> =
+            augmented_sigs.into_iter().flatten().collect();
+        let bls_sigs: Vec<_> = augmented_sigs
+            .iter()
+            .map(|s| s.bls_sig_with_pk.sig)
             .collect();
-        let bls_sigs: Vec<_> = augmented_sigs.iter().map(|s| s.bls_sig_with_pk.sig).collect();
-        let bls_pks: Vec<_> = augmented_sigs.iter().map(|s| s.bls_sig_with_pk.pk).collect();
+        let bls_pks: Vec<_> = augmented_sigs
+            .iter()
+            .map(|s| s.bls_sig_with_pk.pk)
+            .collect();
         let bgpks: Vec<_> = augmented_sigs.iter().map(|s| s.bgpk).collect();
         let asig = C::G1::msm(&bls_sigs, &lis).unwrap().into_affine();
         let apk = C::G2::msm(&bls_pks, &lis).unwrap().into_affine();
@@ -122,7 +129,9 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
     }
 
     pub fn aggregator(&self, final_share: DkgResult<C>) -> crate::agg::SignatureAggregator<C> {
-        let pks: HashMap<_, _> = self.bls_pks.iter()
+        let pks: HashMap<_, _> = self
+            .bls_pks
+            .iter()
             .cloned()
             .zip(final_share.bgpk)
             .enumerate()
@@ -146,12 +155,14 @@ impl<C: Pairing> DkgResult<C> {
         Self {
             c: (keys.iter().map(|key| key.c).sum::<C::G1>()).into_affine(),
             // TODO: affine conversions
-            bgpk: (0..n).map(|j| {
-                keys.iter()
-                    .map(|key| key.bgpk[j])
-                    .sum::<C::G2>()
-                    .into_affine()
-            }).collect(),
+            bgpk: (0..n)
+                .map(|j| {
+                    keys.iter()
+                        .map(|key| key.bgpk[j])
+                        .sum::<C::G2>()
+                        .into_affine()
+                })
+                .collect(),
             h1: keys.iter().map(|key| key.h1).sum::<C::G1>().into_affine(),
             h2: keys.iter().map(|key| key.h2).sum::<C::G2>().into_affine(),
         }

@@ -40,18 +40,24 @@ impl<C: Pairing> DkgTranscript<C> {
 
     pub fn merge(transcripts: &[Self]) -> Self {
         let n = transcripts[0].a.len();
-        let a = (0..n).map(|j| {
-            transcripts.iter()
-                .map(|t| t.a[j])
-                .sum::<C::G1>().into_affine()
-        }).collect();
+        let a = (0..n)
+            .map(|j| {
+                transcripts
+                    .iter()
+                    .map(|t| t.a[j])
+                    .sum::<C::G1>()
+                    .into_affine()
+            })
+            .collect();
 
-        let payload = transcripts.iter()
+        let payload = transcripts
+            .iter()
             .map(|t| t.payload.clone())
             .collect::<Vec<_>>();
         let payload = DkgResult::merge(&payload);
 
-        let koe_proofs = transcripts.iter()
+        let koe_proofs = transcripts
+            .iter()
             .flat_map(|t| t.koe_proofs.clone())
             .collect::<Vec<_>>();
 

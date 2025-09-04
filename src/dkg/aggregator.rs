@@ -33,22 +33,27 @@ where
     }
 
     pub fn add<R: Rng>(&mut self, transcript: Transcript<C>, rng: &mut R) -> Result<(), ()> {
-        let new_receipts: Vec<_> = transcript.receipts.iter()
+        let new_receipts: Vec<_> = transcript
+            .receipts
+            .iter()
             .filter(|(_r, w)| *w > 0)
             .collect();
-        let aggregated_pks: HashSet<C::G1Affine> = self.receipts.keys()
-            .map(|r| r.dealer_pk)
-            .collect();
-        let missing_pks: HashSet<C::G1Affine> = self.dealer_pks.difference(&aggregated_pks)
+        let aggregated_pks: HashSet<C::G1Affine> =
+            self.receipts.keys().map(|r| r.dealer_pk).collect();
+        let missing_pks: HashSet<C::G1Affine> = self
+            .dealer_pks
+            .difference(&aggregated_pks)
             .copied()
             .collect();
-        let has_new_pks = new_receipts.iter()
+        let has_new_pks = new_receipts
+            .iter()
             .any(|(r, _w)| missing_pks.contains(&r.dealer_pk));
         if !has_new_pks {
             return Ok(());
         }
 
-        let receipts_to_verify: HashSet<ContributionReceipt<C>> = new_receipts.iter()
+        let receipts_to_verify: HashSet<ContributionReceipt<C>> = new_receipts
+            .iter()
             .filter_map(|(r, _w)| (!self.receipts.contains_key(r)).then_some(r.clone()))
             .collect();
 
@@ -57,7 +62,9 @@ where
         }
 
         transcript.check_consistency()?;
-        self.dkg.verifier.verify(&transcript.agg_ss, &self.dkg.pvss.signer_pks, rng)?;
+        self.dkg
+            .verifier
+            .verify(&transcript.agg_ss, &self.dkg.pvss.signer_pks, rng)?;
 
         for (r, w) in new_receipts {
             *self.receipts.entry(r.clone()).or_insert(0) += w;
@@ -66,7 +73,11 @@ where
         if self.agg_ss.is_none() {
             self.agg_ss = Some(transcript.agg_ss);
         } else {
-            let new_agg_ss = self.agg_ss.clone().unwrap().aggregate_with(vec![transcript.agg_ss]);
+            let new_agg_ss = self
+                .agg_ss
+                .clone()
+                .unwrap()
+                .aggregate_with(vec![transcript.agg_ss]);
             self.agg_ss = Some(new_agg_ss);
         }
         Ok(())
@@ -80,8 +91,13 @@ where
     }
 
     fn aggregated_dealer_pks(&self) -> HashSet<C::G1Affine> {
-        self.receipts.keys()
-            .filter_map(|r| self.dealer_pks.contains(&r.dealer_pk).then_some(r.dealer_pk))
+        self.receipts
+            .keys()
+            .filter_map(|r| {
+                self.dealer_pks
+                    .contains(&r.dealer_pk)
+                    .then_some(r.dealer_pk)
+            })
             .collect()
     }
 }
@@ -100,18 +116,13 @@ mod tests {
 
         let (n, t) = (10, 7);
 
-        let dealers: Vec<_> = (0..3)
-            .map(|_| BlsSigner::<Bls12_381>::new(rng))
-            .collect();
-        let dealer_pks: Vec<G1Affine> = dealers.iter()
-            .map(|d| d.bls_pk_g1)
-            .collect();
+        let dealers: Vec<_> = (0..3).map(|_| BlsSigner::<Bls12_381>::new(rng)).collect();
+        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.bls_pk_g1).collect();
 
-        let signers_pks: Vec<_> = (0..n)
-            .map(|_| G2Affine::rand(rng))
-            .collect();
+        let signers_pks: Vec<_> = (0..n).map(|_| G2Affine::rand(rng)).collect();
 
-        let dkg = Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
+        let dkg =
+            Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
         let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1()).unwrap();
         let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1()).unwrap();
         let ss3 = dkg.deal_and_sign(rng, dealers[2].pk_in_g1()).unwrap();
@@ -149,7 +160,6 @@ mod tests {
         let ss = agg1.get_transcript();
         assert!(dkg.verify(&ss, rng).is_ok());
         assert_eq!(ss.receipts.len(), 3);
-        assert_eq!(ss.receipts.iter().map(|(_, w)| w).sum::<u32>(), 5);  // TODO: map
-
+        assert_eq!(ss.receipts.iter().map(|(_, w)| w).sum::<u32>(), 5); // TODO: map
     }
 }

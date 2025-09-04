@@ -22,7 +22,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 /// TODO:
 
 #[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Config<C: Pairing, D: EvaluationDomain<C::ScalarField> = GeneralEvaluationDomain<<C as Pairing>::ScalarField>> {
+pub struct Config<
+    C: Pairing,
+    D: EvaluationDomain<C::ScalarField> = GeneralEvaluationDomain<<C as Pairing>::ScalarField>,
+> {
     /// The number of signers.
     pub n: usize,
     /// The threshold, i.e. the minimal number of signers required to reconstruct the shared secret.
@@ -39,7 +42,8 @@ pub struct Config<C: Pairing, D: EvaluationDomain<C::ScalarField> = GeneralEvalu
 
 impl<C: Pairing> Config<C> {
     pub fn new(n: usize, t: usize) -> Result<Self, ()> {
-        if !(n > 0 && t > 0 && t <= n) { // todo: test t = 1, t = n
+        if !(n > 0 && t > 0 && t <= n) {
+            // todo: test t = 1, t = n
             return Err(());
         }
         let domain = GeneralEvaluationDomain::new(n).ok_or(())?;
@@ -55,7 +59,10 @@ impl<C: Pairing> Config<C> {
 
 /// Parameters of a PVSS.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Params<C: Pairing, D: EvaluationDomain<C::ScalarField> = GeneralEvaluationDomain<<C as Pairing>::ScalarField>> {
+pub struct Params<
+    C: Pairing,
+    D: EvaluationDomain<C::ScalarField> = GeneralEvaluationDomain<<C as Pairing>::ScalarField>,
+> {
     pub config: Config<C, D>,
     /// The signers' bls public keys in G2.
     /// **Proofs of possession must be checked for these keys.**
@@ -66,10 +73,7 @@ impl<C: Pairing> Params<C> {
     pub fn new(signer_pks: Vec<C::G2Affine>, t: usize) -> Result<Self, ()> {
         let n = signer_pks.len();
         let config = Config::new(n, t)?;
-        Ok(Self {
-            config,
-            signer_pks,
-        })
+        Ok(Self { config, signer_pks })
     }
 }
 
@@ -105,7 +109,6 @@ pub struct SecretSharingWithWitness<C: Pairing> {
     pub payload: SecretSharing<C>,
 }
 
-
 impl<C: Pairing> SecretSharingWithWitness<C> {
     pub fn aggregate_with(self, mut others: Vec<Self>) -> Self {
         others.push(self);
@@ -115,28 +118,36 @@ impl<C: Pairing> SecretSharingWithWitness<C> {
     pub fn aggregate(sharings: &[Self]) -> Self {
         let n = sharings[0].a.len();
         let agg_ss = SecretSharing {
-            c: sharings.iter().map(|s| s.payload.c).sum::<C::G1>().into_affine(),
-            h1: sharings.iter().map(|s| s.payload.h1).sum::<C::G1>().into_affine(),
-            h2: sharings.iter().map(|s| s.payload.h2).sum::<C::G2>().into_affine(),
-            bgpk: (0..n).map(|j| {
-                sharings.iter()
-                    .map(|s| s.payload.bgpk[j])
-                    .sum::<C::G2>()
-                    .into_affine()
-            }).collect(),
+            c: sharings
+                .iter()
+                .map(|s| s.payload.c)
+                .sum::<C::G1>()
+                .into_affine(),
+            h1: sharings
+                .iter()
+                .map(|s| s.payload.h1)
+                .sum::<C::G1>()
+                .into_affine(),
+            h2: sharings
+                .iter()
+                .map(|s| s.payload.h2)
+                .sum::<C::G2>()
+                .into_affine(),
+            bgpk: (0..n)
+                .map(|j| {
+                    sharings
+                        .iter()
+                        .map(|s| s.payload.bgpk[j])
+                        .sum::<C::G2>()
+                        .into_affine()
+                })
+                .collect(),
         };
         SecretSharingWithWitness {
-            a: (0..n).map(|j| {
-                sharings.iter()
-                    .map(|s| s.a[j])
-                    .sum::<C::G1>()
-                    .into_affine()
-            }).collect(),
+            a: (0..n)
+                .map(|j| sharings.iter().map(|s| s.a[j]).sum::<C::G1>().into_affine())
+                .collect(),
             payload: agg_ss,
         }
     }
 }
-
-
-
-

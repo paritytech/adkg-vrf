@@ -28,7 +28,11 @@ impl<C: Pairing> TranscriptVerifier<C> {
     /// TODO: 1. can be computed faster
     /// TODO: 2. can keep lis_at_0
     /// TODO: 3. lis_at_0 can be computed faster
-    pub fn new_with_domain<D: EvaluationDomain<C::ScalarField>>(fft_domain: D, n: usize, t: usize) -> Self {
+    pub fn new_with_domain<D: EvaluationDomain<C::ScalarField>>(
+        fft_domain: D,
+        n: usize,
+        t: usize,
+    ) -> Self {
         assert!(fft_domain.size() >= n);
         assert!(n >= t);
         assert!(t > 0);
@@ -45,7 +49,11 @@ impl<C: Pairing> TranscriptVerifier<C> {
     /// Uses Fiat-Shamir randomness to verify the DKG `transcript`, and returns the payload, if valid.
     /// Is useful for on-chain verification of transcripts, when instead of aggregating transcripts,
     /// valid payloads are aggregated.
-    pub fn verify_with_fs<D: EvaluationDomain<C::ScalarField>>(&self, params: &Ceremony<C, D>, transcript: DkgTranscript<C>) -> Result<DkgResult<C>, ()> {
+    pub fn verify_with_fs<D: EvaluationDomain<C::ScalarField>>(
+        &self,
+        params: &Ceremony<C, D>,
+        transcript: DkgTranscript<C>,
+    ) -> Result<DkgResult<C>, ()> {
         let mut fs = ark_transcript::Transcript::new_labeled(b"adkg_vrf::dkg::verifier");
         // TODO: hash the pks
         // fs.append(params);
@@ -60,9 +68,16 @@ impl<C: Pairing> TranscriptVerifier<C> {
 
     // TODO: check params
     #[must_use]
-    pub fn verify<D: EvaluationDomain<C::ScalarField>, R: Rng>(&self, params: &Ceremony<C, D>, t: &DkgTranscript<C>, rng: &mut R) -> bool {
+    pub fn verify<D: EvaluationDomain<C::ScalarField>, R: Rng>(
+        &self,
+        params: &Ceremony<C, D>,
+        t: &DkgTranscript<C>,
+        rng: &mut R,
+    ) -> bool {
         // 1. Proofs of knowledge of the discrete logarithms: C_i = f_i(0).g1` and `h1_i = sh_i.g1`.
-        let koes = t.koe_proofs.iter()
+        let koes = t
+            .koe_proofs
+            .iter()
             .map(|w| {
                 let x = koe::Instance {
                     base: params.g1,
@@ -77,11 +92,15 @@ impl<C: Pairing> TranscriptVerifier<C> {
 
         let payload = &t.payload;
 
-        let sum_c = t.koe_proofs.iter()
+        let sum_c = t
+            .koe_proofs
+            .iter()
             .map(|w| w.c_i)
             .sum::<C::G1>()
             .into_affine();
-        let sum_h1 = t.koe_proofs.iter()
+        let sum_h1 = t
+            .koe_proofs
+            .iter()
             .map(|w| w.h1_i)
             .sum::<C::G1>()
             .into_affine();
@@ -108,7 +127,8 @@ impl<C: Pairing> TranscriptVerifier<C> {
         };
         end_timer!(_t);
 
-        let a_coeffs: Vec<_> = lis_size_n_at_z.iter()
+        let a_coeffs: Vec<_> = lis_size_n_at_z
+            .iter()
             .zip(lis_size_t_at_z)
             .zip(lis_size_t_at_0)
             .map(|((li_n_z, li_t_z), li_t_0)| {
@@ -123,9 +143,14 @@ impl<C: Pairing> TranscriptVerifier<C> {
         end_timer!(_t);
 
         C::multi_pairing(
-            &[a_term + payload.c * r2 + payload.h1 * r3, -params.g1, payload.h1.into()],
+            &[
+                a_term + payload.c * r2 + payload.h1 * r3,
+                -params.g1,
+                payload.h1.into(),
+            ],
             &[params.g2, bgpk_at_z + payload.h2 * r3, pk_at_z],
-        ).is_zero()
+        )
+        .is_zero()
     }
 }
 
@@ -133,7 +158,10 @@ impl<C: Pairing> TranscriptVerifier<C> {
 impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
     pub fn verify_transcript_unoptimized<R: Rng>(&self, t: &DkgTranscript<C>, rng: &mut R) {
         // 2. h2 has the same dlog as h1
-        assert_eq!(C::pairing(t.payload.h1, self.g2), C::pairing(self.g1, t.payload.h2));
+        assert_eq!(
+            C::pairing(t.payload.h1, self.g2),
+            C::pairing(self.g1, t.payload.h2)
+        );
         // 3. `A`s are the evaluations of a degree `t` polynomial in the exponent
         self.verify_as(&t, rng);
         // 4. `C = f(0).g1`
@@ -170,7 +198,8 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
     }
 
     fn verify_c(&self, t: &DkgTranscript<C>) {
-        let ls_at_0 = BarycentricDomain::of_size(self.domain, self.t).lagrange_basis_at(C::ScalarField::zero());
+        let ls_at_0 = BarycentricDomain::of_size(self.domain, self.t)
+            .lagrange_basis_at(C::ScalarField::zero());
         let f_at_0 = C::G1::msm(&t.a[..self.t], &ls_at_0).unwrap();
         assert_eq!(t.payload.c, f_at_0.into_affine());
     }

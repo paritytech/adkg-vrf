@@ -23,7 +23,8 @@ pub struct AggThresholdSig<C: Pairing> {
 }
 
 impl<C: Pairing> ThresholdVk<C> {
-    pub fn from_share(share: &SecretSharing<C>) -> Self { //TODO: consume?
+    pub fn from_share(share: &SecretSharing<C>) -> Self {
+        //TODO: consume?
         Self {
             c: share.c,
             h1: share.h1,
@@ -35,15 +36,22 @@ impl<C: Pairing> ThresholdVk<C> {
     }
 
     pub fn verify_unoptimized(&self, sig: &AggThresholdSig<C>, message: C::G1) {
-        sig.bls_sig_with_pk.verify_unoptimized(message, self.g2.into());
+        sig.bls_sig_with_pk
+            .verify_unoptimized(message, self.g2.into());
         assert_eq!(
             C::pairing(self.g1.into(), sig.bgpk),
-            C::multi_pairing(&[self.c, self.h1], &[self.g2.into(), sig.bls_sig_with_pk.pk])
+            C::multi_pairing(
+                &[self.c, self.h1],
+                &[self.g2.into(), sig.bls_sig_with_pk.pk]
+            )
         );
     }
 
     pub fn vuf_unoptimized(&self, sig: &AggThresholdSig<C>, message: C::G1) -> PairingOutput<C> {
         self.verify_unoptimized(sig, message);
-        C::multi_pairing(&[(-message).into(), sig.bls_sig_with_pk.sig], &[sig.bgpk, self.h2])
+        C::multi_pairing(
+            &[(-message).into(), sig.bls_sig_with_pk.sig],
+            &[sig.bgpk, self.h2],
+        )
     }
 }

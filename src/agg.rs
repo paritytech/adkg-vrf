@@ -60,8 +60,6 @@ impl<'a, C: Pairing> Session<'a, C> {
     }
 
     pub fn append_verify_sigs(&mut self, sigs: Vec<StandaloneSig<C>>) {
-        sigs.into_iter()
-            .for_each(|s| { self.append_verify_sig(s) });
+        sigs.into_iter().for_each(|s| self.append_verify_sig(s));
     }
 }
-

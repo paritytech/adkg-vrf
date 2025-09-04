@@ -11,19 +11,17 @@ use ark_std::UniformRand;
 
 use sha2::Sha256;
 
-
 pub fn hash_to_curve<C: CurveGroup, M: CanonicalSerialize>(m: M) -> C::Affine
 where
     C::Config: WBConfig,
     WBMap<C::Config>: MapToCurve<C>,
 {
     let mut m_bytes = vec![0; m.compressed_size()];
-    m.serialize_compressed(&mut m_bytes[..])
-        .unwrap();
-    let wb_to_curve = MapToCurveBasedHasher::<C, DefaultFieldHasher<Sha256, 128>, WBMap<C::Config>>::new(&[123]) // TODO: domain?
-        .unwrap();
-    let m_hash = wb_to_curve.hash(&m_bytes)
-        .unwrap();
+    m.serialize_compressed(&mut m_bytes[..]).unwrap();
+    let wb_to_curve =
+        MapToCurveBasedHasher::<C, DefaultFieldHasher<Sha256, 128>, WBMap<C::Config>>::new(&[123]) // TODO: domain?
+            .unwrap();
+    let m_hash = wb_to_curve.hash(&m_bytes).unwrap();
     m_hash
 }
 
@@ -32,7 +30,12 @@ pub fn sign_point<C: AffineRepr>(sk: C::ScalarField, point: C) -> C {
     sig.into_affine()
 }
 
-pub fn verify_on_point<C: Pairing>(sig: C::G2Affine, point: C::G2Affine, pk: C::G1Affine, g1: C::G1) -> bool {
+pub fn verify_on_point<C: Pairing>(
+    sig: C::G2Affine,
+    point: C::G2Affine,
+    pk: C::G1Affine,
+    g1: C::G1,
+) -> bool {
     let minus_g1 = (-g1).into_affine();
     C::multi_pairing([minus_g1, pk], [sig, point]).is_zero()
 }
@@ -60,7 +63,11 @@ impl<C: Pairing> BlsSigner<C> {
         let bls_pk_g2 = C::G2::generator() * sk;
         let bls_pk_g1 = bls_pk_g1.into_affine();
         let bls_pk_g2 = bls_pk_g2.into_affine();
-        Self { sk, bls_pk_g1, bls_pk_g2 }
+        Self {
+            sk,
+            bls_pk_g1,
+            bls_pk_g2,
+        }
     }
 
     pub fn sign_g1(&self, m: C::G1) -> StandaloneSig<C> {
@@ -80,30 +87,24 @@ impl<C: Pairing> BlsSigner<C> {
 impl<C: Pairing> BlsSigner<C>
 where
     <C::G1 as CurveGroup>::Config: WBConfig,
-    WBMap<<C::G1 as CurveGroup>::Config>: MapToCurve<C::G1>
+    WBMap<<C::G1 as CurveGroup>::Config>: MapToCurve<C::G1>,
 {
     pub fn hash_and_sign<M: CanonicalSerialize>(&self, m: M) -> StandaloneSig<C> {
         let mut m_bytes = vec![0; m.compressed_size()];
-        m.serialize_compressed(&mut m_bytes[..])
-            .unwrap();
+        m.serialize_compressed(&mut m_bytes[..]).unwrap();
         let wb_to_curve = MapToCurveBasedHasher::<
             C::G1,
             DefaultFieldHasher<Sha256, 128>,
             WBMap<<C::G1 as CurveGroup>::Config>,
         >::new(&[]) //TODO:
-            .unwrap();
-        let m_hash_g1 = wb_to_curve.hash(&m_bytes)
-            .unwrap();
+        .unwrap();
+        let m_hash_g1 = wb_to_curve.hash(&m_bytes).unwrap();
         self.sign_g1(m_hash_g1.into_group())
     }
 }
 
 impl<C: Pairing> StandaloneSig<C> {
     pub fn verify_unoptimized(&self, m: C::G1, g2: C::G2Affine) {
-        assert_eq!(
-            C::pairing(self.sig, g2),
-            C::pairing(m.into(), self.pk)
-        );
+        assert_eq!(C::pairing(self.sig, g2), C::pairing(m.into(), self.pk));
     }
 }
-
