@@ -52,10 +52,12 @@ where
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
     pub fn from_pvss(pvss: pvss::Params<C>, dealer_pks: Vec<C::G1Affine>, t_dkg: usize, verifier: pvss::Verifier<C>) -> Result<Self, ()> {
-        let dealer_pks: HashSet<_> = dealer_pks.into_iter().collect();
-        if t_dkg == 0 || t_dkg > dealer_pks.len() {
+        if t_dkg == 0 || t_dkg > dealer_pks.len() || verifier.config != pvss.config {
             return Err(());
         }
+        let dealer_pks: HashSet<_> = dealer_pks.into_iter()
+            .collect();
+
         Ok(Self { pvss, dealer_pks, verifier, t_dkg })
     }
 
@@ -88,34 +90,37 @@ where
         Ok(())
     }
 
+    /// Merges `transcripts` into a new (aggregate) transcript.
+    /// The result doesn't have duplicate receipts, or `0` weights.
     pub fn aggregate(transcripts: Vec<Transcript<C>>) -> Transcript<C> {
-        let (pvss, witness): (Vec<_>, Vec<_>) = transcripts.into_iter()
+        let (ss, receipts): (Vec<_>, Vec<_>) = transcripts.into_iter()
             .map(|t| (t.agg_ss, t.receipts))
             .collect();
-        let agg_pvss = SecretSharingWithWitness::aggregate(&pvss);
-        let mut weights: HashMap<ContributionReceipt<C>, u32> = HashMap::new();
-        witness.into_iter()
+        let agg_ss = SecretSharingWithWitness::aggregate(&ss);
+        let mut receipts_map: HashMap<ContributionReceipt<C>, u32> = HashMap::new();
+        receipts.into_iter()
             .flatten()
-            .for_each(|(c, w)| *weights.entry(c).or_insert(0) += w);
-        let receipts: Vec<_> = weights.into_iter().collect();
-        Transcript { agg_ss: agg_pvss, receipts }
+            .filter(|(_r, w)| *w > 0)
+            .for_each(|(r, w)| *receipts_map.entry(r).or_insert(0) += w);
+        let receipts: Vec<_> = receipts_map.into_iter().collect();
+        Transcript { agg_ss, receipts }
     }
 
-    fn contributed_dealers(&self, t: &Transcript<C>) -> HashSet<C::G1Affine> {
+    fn authorized_contributions(&self, t: &Transcript<C>) -> HashSet<C::G1Affine> {
         t.receipts.iter()
             .filter_map(|r| self.dealer_pks.contains(&r.0.dealer_pk).then_some(r.0.dealer_pk))
             .collect()
     }
 
-    fn enough_dealers(&self, t: &Transcript<C>) -> bool {
-        self.contributed_dealers(t).len() >= self.t_dkg
+    fn enough_contributions(&self, t: &Transcript<C>) -> bool {
+        self.authorized_contributions(t).len() >= self.t_dkg
     }
 
     pub fn finalize<R: Rng>(self, t: Transcript<C>, rng: &mut R) -> Result<ThresholdCrypto<C>, ()> {
-        self.verify(&t, rng)?;
-        if !self.enough_dealers(&t) {
+        if !self.enough_contributions(&t) {
             return Err(());
         }
+        self.verify(&t, rng)?;
         Ok(ThresholdCrypto {
             secret_sharing: t.agg_ss.payload,
             params: self.pvss,

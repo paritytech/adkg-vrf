@@ -10,11 +10,11 @@ use ark_std::{end_timer, start_timer, UniformRand};
 use derivative::Derivative;
 
 /// Precomputed barycentric weights to facilitate interpolation.
-/// Depend only on `(t,n)` so can be reused between the ceremonies.
+/// Depend only on `(t,n)` so can be reused to verify sharings with different signer lists.
 #[derive(Derivative, CanonicalSerialize, CanonicalDeserialize)]
 #[derivative(Clone, Debug)]
 pub struct Verifier<C: Pairing> {
-    config: Config<C>,
+    pub config: Config<C>,
     #[derivative(Debug="ignore")]
     domain_size_n: BarycentricDomain<C::ScalarField>,
     #[derivative(Debug="ignore")]
@@ -22,10 +22,11 @@ pub struct Verifier<C: Pairing> {
 }
 
 impl<C: Pairing> Verifier<C> {
-    /// TODO: 1. can be computed faster
-    /// TODO: 2. can keep lis_at_0
-    /// TODO: 3. lis_at_0 can be computed faster
+
     pub fn new(config: Config<C>) -> Self {
+        // TODO: 1. can be computed faster
+        // TODO: 2. can keep lis_at_0
+        // TODO: 3. lis_at_0 can be computed faster
         let _t = start_timer!(|| "Interpolation");
         let domain_size_n = BarycentricDomain::of_size(config.domain, config.n);
         let domain_size_t = BarycentricDomain::of_size(config.domain, config.t);
