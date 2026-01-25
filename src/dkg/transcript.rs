@@ -1,64 +1,119 @@
+use crate::bls::vanilla::{hash_to_curve, sign_point, verify_on_point};
+use crate::pvss::SecretSharingWithWitness;
+use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
+use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
-use ark_ec::CurveGroup;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::vec::Vec;
+use ark_ec::{CurveGroup, PrimeGroup, VariableBaseMSM};
+use std::hash::{Hash, Hasher};
 
-use crate::dkg::DkgResult;
-use crate::koe;
-
-/// Standalone or aggregated transcript with the witness.
-// TODO: add weights?
-#[derive(Clone, Debug, PartialEq, Eq, CanonicalDeserialize, CanonicalSerialize)]
-pub struct DkgTranscript<C: Pairing> {
-    pub payload: DkgResult<C>,
-
-    // witness data
-    /// Commitment to the secret polynomial `A_j = f(w^j).g1, j = 0,...,n-1`
-    pub(crate) a: Vec<C::G1Affine>,
-    /// Proofs of knowledge of the exponents `(f_i(0), sh_i)`
-    /// such that `C_i=f_i(0).g1` and `h1_i=sh_i.g1` for every dealer `i = 1,...,k`.
-    pub(crate) koe_proofs: Vec<KoeProof<C>>,
+/// Full transcript of a (running) DKG protocol.
+/// Contains a secret sharing aggregated from a number of dealers,
+/// and the corresponding signatures from the dealers
+/// with weights/counts (number of times the dealing has been aggregated).
+#[derive(Clone, Debug)] //TODO: make a map, and eq
+pub struct Transcript<C: Pairing> {
+    pub agg_ss: SecretSharingWithWitness<C>,
+    pub receipts: Vec<(ContributionReceipt<C>, u32)>,
 }
 
-/// Proof that the dealer `i` knows her secrets.
-#[derive(Clone, Debug, PartialEq, Eq, CanonicalDeserialize, CanonicalSerialize)]
-pub(crate) struct KoeProof<C: Pairing> {
-    /// `C_i = f_i(0).g1`
-    pub(crate) c_i: C::G1Affine,
-    /// `h1_i = sh_i.g1`
-    pub(crate) h1_i: C::G1Affine,
-    /// `s_i` is a proof of knowledge of the discrete logs of `(C_i, h1_i)` with respect to `g1`.
-    pub(crate) koe_proof: koe::Proof<C::G1>,
+/// BLS proof of possession of the secrets `(ssk, sh, sk)`,
+/// corresponding to the public keys `(c = ssk.g1 = f(0).g1, h1 = sh.g1, pk = sk.g1)`.
+/// All `3` signatures sign the concatenation `c || h1 || pk` of the public keys.
+/// The keys `ssk` and `sh` are ephemeral (used by an honest dealer once),
+/// `(sk, pk)` is the dealer's long-term keypair.
+/// Together the signatures show that who knows `sk`, knows also `ssk` and `sh`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContributionReceipt<C: Pairing> {
+    // BLS public keys in G1
+    c: C::G1Affine,
+    h1: C::G1Affine,
+    pub dealer_pk: C::G1Affine,
+    // BLS signatures in G2
+    sig_c: C::G2Affine,
+    sig_h1: C::G2Affine,
+    sig_pk: C::G2Affine,
 }
 
-impl<C: Pairing> DkgTranscript<C> {
-    pub fn merge_with(self, others: &[Self]) -> Self {
-        let mut others = others.to_vec();
-        others.push(self);
-        Self::merge(&others)
+impl<C: Pairing> ContributionReceipt<C>
+where
+    <C::G2 as CurveGroup>::Config: WBConfig,
+    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
+{
+    pub fn sign(
+        c: (C::ScalarField, C::G1Affine),
+        h1: (C::ScalarField, C::G1Affine),
+        dealer: (C::ScalarField, C::G1Affine),
+    ) -> Self {
+        let public_keys = (c.1, h1.1, dealer.1);
+        let message_hash = hash_to_curve::<C::G2, _>(public_keys);
+        Self {
+            c: c.1,
+            h1: h1.1,
+            dealer_pk: dealer.1,
+            sig_c: sign_point(c.0, message_hash),
+            sig_h1: sign_point(h1.0, message_hash),
+            sig_pk: sign_point(dealer.0, message_hash),
+        }
     }
 
-    pub fn merge(transcripts: &[Self]) -> Self {
-        let n = transcripts[0].a.len();
-        let a = (0..n).map(|j| {
-            transcripts.iter()
-                .map(|t| t.a[j])
-                .sum::<C::G1>().into_affine()
-        }).collect();
+    fn hash_pks(&self) -> C::G2Affine {
+        let public_keys = (self.c, self.h1, self.dealer_pk);
+        hash_to_curve::<C::G2, _>(public_keys)
+    }
 
-        let payload = transcripts.iter()
-            .map(|t| t.payload.clone())
-            .collect::<Vec<_>>();
-        let payload = DkgResult::merge(&payload);
-
-        let koe_proofs = transcripts.iter()
-            .flat_map(|t| t.koe_proofs.clone())
-            .collect::<Vec<_>>();
-
-        Self {
-            payload,
-            a,
-            koe_proofs,
+    pub fn verify_all_sigs(&self) -> Result<(), ()> {
+        let message_hash = self.hash_pks();
+        let g1 = C::G1::generator();
+        if verify_on_point::<C>(self.sig_c, message_hash, self.c, g1)
+            && verify_on_point::<C>(self.sig_h1, message_hash, self.h1, g1)
+            && verify_on_point::<C>(self.sig_pk, message_hash, self.dealer_pk, g1)
+        {
+            Ok(())
+        } else {
+            Err(())
         }
+    }
+
+    // fn verify_dealer(&self) -> bool {
+    //     let message_hash = self.hash_pks();
+    //     let g1 = C::G1::generator();
+    //     verify_on_point::<C>(self.sig_pk, message_hash, self.dealer_pk, g1)
+    // }
+}
+
+impl<C: Pairing> Hash for ContributionReceipt<C> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.c.hash(state);
+        self.h1.hash(state);
+        self.dealer_pk.hash(state);
+        self.sig_c.hash(state);
+        self.sig_h1.hash(state);
+        self.sig_pk.hash(state);
+    }
+}
+
+impl<C: Pairing> Transcript<C> {
+    pub fn list_dealers(&self) -> Vec<C::G1Affine> {
+        self.receipts.iter().map(|(r, _w)| r.dealer_pk).collect()
+    }
+
+    /// `c`s and `h1`s in the receipts sum up to `c` and `h1` in the secret sharing.
+    pub fn check_consistency(&self) -> Result<(), ()> {
+        let cs: Vec<_> = self.receipts.iter().map(|(r, _w)| r.c).collect();
+        let h1s: Vec<_> = self.receipts.iter().map(|(r, _w)| r.h1).collect();
+        let ws: Vec<_> = self
+            .receipts
+            .iter()
+            .map(|(_, w)| C::ScalarField::from(*w))
+            .collect();
+        let c = C::G1::msm(&cs, &ws).unwrap();
+        if c.into_affine() != self.agg_ss.payload.c {
+            return Err(());
+        }
+        let h1 = C::G1::msm(&h1s, &ws).unwrap();
+        if h1.into_affine() != self.agg_ss.payload.h1 {
+            return Err(());
+        }
+        Ok(())
     }
 }

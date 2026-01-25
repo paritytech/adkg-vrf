@@ -1,161 +1,179 @@
-use ark_ec::pairing::Pairing;
-use ark_ec::{CurveGroup, PrimeGroup, VariableBaseMSM};
-use ark_ff::Zero;
-use ark_poly::EvaluationDomain;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::vec::Vec;
-use hashbrown::HashMap;
-
-use crate::bls::threshold::AggThresholdSig;
-use crate::bls::vanilla::StandaloneSig;
-use crate::dkg::verifier::TranscriptVerifier;
-use crate::utils::BarycentricDomain;
-
-/// Aggregatable Publicly Verifiable Secret Sharing scheme (aPVSS) for sharing a secret key `f(0).g1` in G1,
-/// corresponding to the public key `f(0).g2` in G2.
-///
-/// There are 2 types of participants:
-/// 1. a fixed list of signers, identified with their BLS public keys in G2, and
-/// 2. any number of dealers, whose authentication is the problem of a higher-level protocol.
-///
-/// A dealer samples a secret and produces a transcript containing shares of the secret, each encrypted to the corresponding signer,
-/// together with a publicly verifiable proof of validity of the ciphertexts.
-/// Transcripts with contributions from different dealers can be aggregated into a single verifiable transcript.
-/// The scheme is secure (vaguely, that means the parameters produced are secure),
-/// if the final aggregated transcript is valid, and contains a contribution from a single honest dealer.
-///
-/// *A fun property* of the scheme is that signers don't have to use (or even decrypt) their shares.
-/// Instead, anyone can blindly use the ciphertexts to produce proofs that the threshold number of signers have signed.
-
-pub mod dealer;
-pub mod verifier;
+pub mod aggregator;
 pub mod transcript;
 
-pub use transcript::*;
+use crate::pvss::SecretSharingWithWitness;
+use crate::{pvss, ThresholdCrypto};
+use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
+use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
+use ark_ec::pairing::Pairing;
+use ark_ec::CurveGroup;
+use ark_std::rand::Rng;
+use ark_std::UniformRand;
+use hashbrown::{HashMap, HashSet};
+use transcript::{ContributionReceipt, Transcript};
 
-//TODO: move bls_pks out?
-/// Parameters of an aPVSS instantiation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Ceremony<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> {
-    /// The number of signers.
-    pub n: usize,
-    /// The threshold, i.e. the minimal number of signers required to reconstruct the shared secret.
-    pub t: usize,
-    /// The signers' bls public keys in G2.
-    /// **It's critical that proofs of possession are checked for these keys.**
-    pub bls_pks: &'a [C::G2Affine],
-    /// An FFT-friendly multiplicative subgroup of the field of size not less than `n`.
-    /// The evaluation points are the first `n` elements of the subgroup: `x_j = w^j, j = 0,...,n-1`,
-    /// where `w` is the generator of the subgroup.
-    pub domain: D,
-    /// Generator of G1.
-    pub g1: C::G1,
-    /// Generator of G2.
-    pub g2: C::G2,
+/// Fully defines a protocol instance.
+#[derive(Clone, Debug)]
+pub struct Dkg<C: Pairing> {
+    /// PVSS parameters, including the list of signers.
+    pub pvss: pvss::Params<C>,
+    /// Authorized dealers.
+    pub dealer_pks: HashSet<C::G1Affine>,
+    /// Verifies `SecretSharing`s produced by PVSS.
+    pub verifier: pvss::Verifier<C>,
+    /// This many of the authorized dealers has to participate to produce a "secure" transcript.
+    /// With 2/3-honesty assumption, t_dkg = (1/3 + 1) of dealers
+    pub t_dkg: usize,
 }
 
-/// Useful data produced by the protocol:
-/// - encrypted shares of the secret key,
-/// - the corresponding threshold public key, and
-/// - a pair of points with the same discrete logarithm.
-///
-/// The secret key being shared among the signers is `f(0).g2` for some polynomial `f`.
-/// `f(0).g1` is the public key, corresponding to the shared secret key. The share of the signer `j` is `f(w^j).g2`.
-/// `(h1, h2)` are points in G1xG2 with the same discrete logarithm, i.e. `h1 = sh.g1` and `h2 = sh.g2` for some `sh`.
-/// `bgpk_j = f(w^j).g2 + sh.pk_j, j = 0,...,n-1`.
-/// Then `(bgpk_j, h2)` is the ElGamal encryption of the point `f(w^j).g2` with `pk_j` for the ephemeral secret `sh`.
-#[derive(Clone, Debug, PartialEq, Eq, CanonicalDeserialize, CanonicalSerialize)]
-//TODO: check visibility
-//TODO: better name
-pub struct DkgResult<C: Pairing> {
-    /// The public key corresponding to the shared secret key.
-    /// `c = f(0).g1`
-    pub(crate) c: C::G1Affine,
-    /// Shares of the secret, encrypted to the signers.
-    /// `bgpk_j = f(w^j).g2 + sh.pk_j, j = 0,...,n-1`
-    pub bgpk: Vec<C::G2Affine>,
-    /// `h1 = sh.g1`
-    pub(crate) h1: C::G1Affine,
-    /// `h2 = sh.g2`
-    pub(crate) h2: C::G2Affine,
+/// A dealer not interested in further participation in the protocol (aggregating transcripts) can call this.
+pub fn deal_and_sign<C: Pairing, R: Rng>(
+    pvss: &pvss::Params<C>,
+    rng: &mut R,
+    dealer: (C::ScalarField, C::G1Affine),
+) -> Result<Transcript<C>, ()>
+where
+    <C::G2 as CurveGroup>::Config: WBConfig,
+    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
+{
+    let ssk = C::ScalarField::rand(rng);
+    let sh = C::ScalarField::rand(rng);
+    let ss = pvss.deal_secrets(ssk, sh, rng)?;
+    let receipt = ContributionReceipt::<C>::sign((ssk, ss.payload.c), (sh, ss.payload.h1), dealer);
+    Ok(Transcript {
+        agg_ss: ss,
+        receipts: vec![(receipt, 1)],
+    })
 }
 
-impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
-    pub fn setup(t: usize, bls_pks: &'a [C::G2Affine]) -> Self {
-        let n = bls_pks.len();
-        assert!(t <= n);
-        //todo: test t = 1, t = n
-        Self {
-            n,
-            t,
-            bls_pks,
-            domain: D::new(n).unwrap(),
-            g1: C::G1::generator(),
-            g2: C::G2::generator(),
+impl<C: Pairing> Dkg<C>
+where
+    <C::G2 as CurveGroup>::Config: WBConfig,
+    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
+{
+    pub fn from_pvss(
+        pvss: pvss::Params<C>,
+        dealer_pks: Vec<C::G1Affine>,
+        t_dkg: usize,
+        verifier: pvss::Verifier<C>,
+    ) -> Result<Self, ()> {
+        if t_dkg == 0 || t_dkg > dealer_pks.len() || verifier.config != pvss.config {
+            return Err(());
         }
+        let dealer_pks: HashSet<_> = dealer_pks.into_iter().collect();
+
+        Ok(Self {
+            pvss,
+            dealer_pks,
+            verifier,
+            t_dkg,
+        })
     }
 
-    pub fn verifier(&self) -> TranscriptVerifier<C> {
-        TranscriptVerifier::new_with_domain(self.domain, self.n, self.t)
+    /// This method creates a new `pvss::Verifier`, so use `Self::from_pvss` if you have a compatible one.
+    pub fn new(
+        signer_pks: Vec<C::G2Affine>,
+        t_pvss: usize,
+        dealer_pks: Vec<C::G1Affine>,
+        t_dkg: usize,
+    ) -> Result<Self, ()> {
+        let pvss = pvss::Params::<C>::new(signer_pks, t_pvss)?;
+        let verifier = pvss::Verifier::new(pvss.config.clone());
+        Self::from_pvss(pvss, dealer_pks, t_dkg, verifier)
     }
 
-    // TODO: args are not any more aggregatable
-    pub fn aggregate_augmented_sigs(&self, augmented_sigs: Vec<Option<AggThresholdSig<C>>>) -> AggThresholdSig<C> {
-        assert_eq!(augmented_sigs.len(), self.n);
-        let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
-        bitmask.resize(self.domain.size(), false);
-        let set_bits_count = bitmask.iter().filter(|b| **b).count();
-        assert!(set_bits_count >= self.t);
-        let lis = BarycentricDomain::from_subset(self.domain, &bitmask)
-            .lagrange_basis_at(C::ScalarField::zero());
-        let augmented_sigs: Vec<AggThresholdSig<C>> = augmented_sigs.into_iter()
+    pub fn deal_and_sign<R: Rng>(
+        &self,
+        rng: &mut R,
+        dealer: (C::ScalarField, C::G1Affine),
+    ) -> Result<Transcript<C>, ()> {
+        deal_and_sign(&self.pvss, rng, dealer)
+    }
+
+    pub fn verify<R: Rng>(&self, transcript: &Transcript<C>, rng: &mut R) -> Result<(), ()>
+    where
+        <C::G2 as CurveGroup>::Config: WBConfig,
+        WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
+    {
+        // TODO: it doesn't check the dealers
+        for (r, _w) in transcript.receipts.iter() {
+            r.verify_all_sigs()?;
+        }
+        transcript.check_consistency()?;
+        self.verifier
+            .verify(&transcript.agg_ss, &self.pvss.signer_pks, rng)?;
+        Ok(())
+    }
+
+    /// Merges `transcripts` into a new (aggregate) transcript.
+    /// The result doesn't have duplicate receipts, or `0` weights.
+    pub fn aggregate(transcripts: Vec<Transcript<C>>) -> Transcript<C> {
+        let (ss, receipts): (Vec<_>, Vec<_>) = transcripts
+            .into_iter()
+            .map(|t| (t.agg_ss, t.receipts))
+            .collect();
+        let agg_ss = SecretSharingWithWitness::aggregate(&ss);
+        let mut receipts_map: HashMap<ContributionReceipt<C>, u32> = HashMap::new();
+        receipts
+            .into_iter()
             .flatten()
-            .collect();
-        let bls_sigs: Vec<_> = augmented_sigs.iter().map(|s| s.bls_sig_with_pk.sig).collect();
-        let bls_pks: Vec<_> = augmented_sigs.iter().map(|s| s.bls_sig_with_pk.pk).collect();
-        let bgpks: Vec<_> = augmented_sigs.iter().map(|s| s.bgpk).collect();
-        let asig = C::G1::msm(&bls_sigs, &lis).unwrap().into_affine();
-        let apk = C::G2::msm(&bls_pks, &lis).unwrap().into_affine();
-        let abgpk = C::G2::msm(&bgpks, &lis).unwrap().into_affine();
-        AggThresholdSig {
-            bls_sig_with_pk: StandaloneSig { sig: asig, pk: apk },
-            bgpk: abgpk,
-        }
+            .filter(|(_r, w)| *w > 0)
+            .for_each(|(r, w)| *receipts_map.entry(r).or_insert(0) += w);
+        let receipts: Vec<_> = receipts_map.into_iter().collect();
+        Transcript { agg_ss, receipts }
     }
 
-    pub fn aggregator(&self, final_share: DkgResult<C>) -> crate::agg::SignatureAggregator<C> {
-        let pks: HashMap<_, _> = self.bls_pks.iter()
-            .cloned()
-            .zip(final_share.bgpk)
-            .enumerate()
-            .map(|(j, (bls_pk_j, bgpk_j))| (bls_pk_j, (bgpk_j, j)))
-            .collect();
-        crate::agg::SignatureAggregator {
-            g2: self.g2.into_affine(),
-            pks,
+    fn authorized_contributions(&self, t: &Transcript<C>) -> HashSet<C::G1Affine> {
+        t.receipts
+            .iter()
+            .filter_map(|r| {
+                self.dealer_pks
+                    .contains(&r.0.dealer_pk)
+                    .then_some(r.0.dealer_pk)
+            })
+            .collect()
+    }
+
+    fn enough_contributions(&self, t: &Transcript<C>) -> bool {
+        self.authorized_contributions(t).len() >= self.t_dkg
+    }
+
+    pub fn finalize<R: Rng>(self, t: Transcript<C>, rng: &mut R) -> Result<ThresholdCrypto<C>, ()> {
+        if !self.enough_contributions(&t) {
+            return Err(());
         }
+        self.verify(&t, rng)?;
+        Ok(ThresholdCrypto {
+            secret_sharing: t.agg_ss.payload,
+            params: self.pvss,
+        })
     }
 }
 
-impl<C: Pairing> DkgResult<C> {
-    pub fn merge_with(self, mut others: Vec<Self>) -> Self {
-        others.push(self);
-        Self::merge(&others)
-    }
+#[cfg(test)]
+mod tests {
+    use crate::bls::vanilla::BlsSigner;
+    use crate::dkg::Dkg;
+    use crate::BlsDkg;
+    use ark_bls12_381::{Bls12_381, G1Affine, G2Affine};
+    use ark_std::{test_rng, UniformRand};
 
-    pub fn merge(keys: &[Self]) -> Self {
-        let n = keys[0].bgpk.len();
-        Self {
-            c: (keys.iter().map(|key| key.c).sum::<C::G1>()).into_affine(),
-            // TODO: affine conversions
-            bgpk: (0..n).map(|j| {
-                keys.iter()
-                    .map(|key| key.bgpk[j])
-                    .sum::<C::G2>()
-                    .into_affine()
-            }).collect(),
-            h1: keys.iter().map(|key| key.h1).sum::<C::G1>().into_affine(),
-            h2: keys.iter().map(|key| key.h2).sum::<C::G2>().into_affine(),
-        }
+    #[test]
+    fn aggregation() {
+        let rng = &mut test_rng();
+
+        let (n, t) = (10, 7);
+
+        let dealers: Vec<_> = (0..3).map(|_| BlsSigner::<Bls12_381>::new(rng)).collect();
+        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.bls_pk_g1).collect();
+        let signers_pks: Vec<_> = (0..n).map(|_| G2Affine::rand(rng)).collect();
+
+        let dkg =
+            Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
+        let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1()).unwrap();
+        let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1()).unwrap();
+        let agg_ss = BlsDkg::aggregate(vec![ss1.clone(), ss1, ss2]);
+        assert_eq!(agg_ss.receipts.len(), 2);
+        // assert_eq!(agg_ss.receipts[0].1, 2); //TODO
     }
 }

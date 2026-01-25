@@ -13,9 +13,11 @@ ark-serialize = { version = "0.5", default-features = false, features = ["derive
 ark-transcript = { git = "https://github.com/w3f/ark-transcript" }
 ark-bls12-381 = { version = "0.5", default-features = false, features = ["curve"] }
 hashbrown = "0.15"
+sha2 = "0.10.9"
+derivative = "2.2"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.7"
 
 [[bench]]
 name = "straus"

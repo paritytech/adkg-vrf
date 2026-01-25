@@ -7,17 +7,23 @@ use ark_std::rand::Rng;
 use ark_std::{end_timer, start_timer, UniformRand};
 use ark_std::{vec, vec::Vec};
 
-use crate::dkg::transcript::{DkgTranscript, KoeProof};
-use crate::dkg::{Ceremony, DkgResult};
 use crate::koe;
+use crate::old_dkg::transcript::{DkgTranscript, KoeProof};
+use crate::old_dkg::{Ceremony, DkgResult};
 
 impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
     //TODO: cryptorng?
     pub fn deal<R: Rng>(&self, rng: &mut R) -> DkgTranscript<C> {
         // dealer's secrets
-        let (f_mon, sh) = (DensePolynomial::rand(self.t - 1, rng), C::ScalarField::rand(rng));
+        let (f_mon, sh) = (
+            DensePolynomial::rand(self.t - 1, rng),
+            C::ScalarField::rand(rng),
+        );
         let ssk = f_mon[0];
-        let f_lag: Vec<C::ScalarField> = f_mon.evaluate_over_domain(self.domain).evals.into_iter()
+        let f_lag: Vec<C::ScalarField> = f_mon
+            .evaluate_over_domain(self.domain)
+            .evals
+            .into_iter()
             .take(self.n)
             .collect();
 
@@ -28,12 +34,11 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
         end_timer!(_t);
 
         let _t = start_timer!(|| "Key exchange");
-        let shared_keys: Vec<_> = self.bls_pks.iter()
-            .map(|&pk_j| pk_j * sh)
-            .collect();
+        let shared_keys: Vec<_> = self.bls_pks.iter().map(|&pk_j| pk_j * sh).collect();
         end_timer!(_t);
 
-        let bgpk: Vec<_> = f_lag_g2.into_iter()
+        let bgpk: Vec<_> = f_lag_g2
+            .into_iter()
             .zip(shared_keys)
             .map(|(f_j, sk_j)| f_j + sk_j)
             .collect();
@@ -43,8 +48,14 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
         let h1 = self.g1 * sh;
         let h2 = self.g2 * sh;
 
-        let instance = koe::Instance { base: self.g1, points: vec![c, h1] };
-        let statement = koe::Statement { instance, dlogs: vec![ssk, sh] };
+        let instance = koe::Instance {
+            base: self.g1,
+            points: vec![c, h1],
+        };
+        let statement = koe::Statement {
+            instance,
+            dlogs: vec![ssk, sh],
+        };
         let koe_proof = statement.prove(rng);
 
         // Can be batched, but who cares.
@@ -52,7 +63,11 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
         let h1 = h1.into_affine();
         let h2 = h2.into_affine();
         let payload = DkgResult { bgpk, h1, h2, c };
-        let koe_proof = KoeProof { c_i: c, h1_i: h1, koe_proof };
+        let koe_proof = KoeProof {
+            c_i: c,
+            h1_i: h1,
+            koe_proof,
+        };
         DkgTranscript {
             payload,
             a: f_lag_g1,
@@ -75,9 +90,7 @@ mod tests {
         // t = 2f+1 -- threshold number of signers
         // k = f+1 -- number of dealers
         let (n, t, k) = (3 * f + 1, 2 * f + 1, f + 1);
-        let signers = (0..n)
-            .map(|_| C::G2Affine::rand(rng))
-            .collect::<Vec<_>>();
+        let signers = (0..n).map(|_| C::G2Affine::rand(rng)).collect::<Vec<_>>();
         let params = Ceremony::<C, GeneralEvaluationDomain<C::ScalarField>>::setup(t, &signers);
         let _t = start_timer!(|| format!("Transcript generation, n = {}, t = {}", n, t));
         let transcript = params.deal(rng);
@@ -116,7 +129,11 @@ mod tests {
         let table = ark_ec::scalar_mul::BatchMulPreprocessing::new(g, scalars.len());
         end_timer!(_t_table);
 
-        ark_std::println!("Table size = {}x{} affine points", table.table.len(), table.table[0].len());
+        ark_std::println!(
+            "Table size = {}x{} affine points",
+            table.table.len(),
+            table.table[0].len()
+        );
 
         let _t_mul = start_timer!(|| "Multiplication");
         C::batch_mul_with_preprocessing(&table, &scalars);
