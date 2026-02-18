@@ -80,7 +80,7 @@ mod tests {
     use crate::dkg::Dkg;
     use crate::pvss;
     use crate::utils::BarycentricDomain;
-    use ark_bls12_381::{Bls12_381, G1Affine, G1Projective};
+    use ark_bls12_381::{Bls12_381, G1Affine};
     use ark_ec::pairing::Pairing;
     use ark_ec::{AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
     use ark_ff::Zero;
@@ -172,7 +172,7 @@ mod tests {
         let threshold_vk = ThresholdVk::from_share(&keys.secret_sharing);
         let sig_aggregator = aggregator::<Bls12_381>(&signers_pks, keys.secret_sharing.bgpk);
 
-        let message = G1Projective::generator();
+        let message = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
         let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(message)).collect();
 
         let mut sig_agg_session_n = sig_aggregator.start_session(message.into_affine());
@@ -187,5 +187,11 @@ mod tests {
         let threshold_sig_t = aggregate_augmented_sigs(augmented_sigs_t, &config);
         let vuf_t = threshold_vk.vuf_unoptimized(&threshold_sig_t, message);
         assert_eq!(vuf_t, vuf_n);
+
+        let (ss, epk) = threshold_vk.initiate_key_exchange(b"message", rng);
+        let ss_ = epk.complete_key_exchange(&threshold_sig_n);
+        assert_eq!(ss, ss_);
+        let ss_ = epk.complete_key_exchange(&threshold_sig_t);
+        assert_eq!(ss, ss_);
     }
 }
