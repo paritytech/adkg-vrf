@@ -89,16 +89,12 @@ where
     <C::G1 as CurveGroup>::Config: WBConfig,
     WBMap<<C::G1 as CurveGroup>::Config>: MapToCurve<C::G1>,
 {
+    pub fn hash_to_g1<M: CanonicalSerialize>(m: M) -> C::G1Affine {
+        hash_to_curve(m)
+    }
+
     pub fn hash_and_sign<M: CanonicalSerialize>(&self, m: M) -> StandaloneSig<C> {
-        let mut m_bytes = vec![0; m.compressed_size()];
-        m.serialize_compressed(&mut m_bytes[..]).unwrap();
-        let wb_to_curve = MapToCurveBasedHasher::<
-            C::G1,
-            DefaultFieldHasher<Sha256, 128>,
-            WBMap<<C::G1 as CurveGroup>::Config>,
-        >::new(&[]) //TODO:
-        .unwrap();
-        let m_hash_g1 = wb_to_curve.hash(&m_bytes).unwrap();
+        let m_hash_g1 = Self::hash_to_g1(m);
         self.sign_g1(m_hash_g1.into_group())
     }
 }
