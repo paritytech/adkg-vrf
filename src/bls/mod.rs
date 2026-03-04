@@ -41,12 +41,17 @@ mod tests {
 
         let ss = PairingOutput::<Bls12_381>::rand(rng);
 
-        let mut pt = vec![0u8; 32];
-        rng.fill(&mut pt[..]);
+        let pt = pt(rng);
 
         let cc = enc(&pt, &ss);
         let pt_ = dec(&cc, &ss);
 
         assert_eq!(pt_, pt);
+    }
+
+    pub fn pt<R: Rng>(rng: &mut R) -> Vec<u8> {
+        let mut pt = vec![0u8; 32];
+        rng.fill(&mut pt[..]);
+        pt
     }
 }

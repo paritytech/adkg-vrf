@@ -85,6 +85,7 @@ mod tests {
     use ark_ec::{AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
     use ark_ff::Zero;
     use ark_poly::EvaluationDomain;
+    use ark_std::rand::Rng;
     use ark_std::test_rng;
     use ark_std::vec::Vec;
     use hashbrown::HashMap;
@@ -135,6 +136,15 @@ mod tests {
             bls_sig_with_pk: StandaloneSig { sig: asig, pk: apk },
             bgpk: abgpk,
         }
+    }
+
+    // Returns threshold verification and aggregation keys
+    pub fn simulate_pvss<C: Pairing, R: Rng>(signers_pks: Vec<C::G2Affine>, t: usize, rng: &mut R) -> (ThresholdVk<C>, Vec<C::G2Affine>) {
+        let pvss = pvss::Params::<C>::new(signers_pks.clone(), t).unwrap();
+        let share = pvss.deal(rng).unwrap();
+        let bgpk = share.payload.bgpk.clone();
+        let tvk = ThresholdVk::from_share(&share.payload);
+        (tvk, bgpk)
     }
 
     #[test]
