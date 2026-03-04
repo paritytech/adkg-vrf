@@ -2,6 +2,7 @@ use crate::bls::enc;
 use crate::bls::ibe::EncPk;
 use crate::bls::threshold::ThresholdVk;
 use crate::bls::vanilla::{BlsSigner, StandaloneSig};
+use crate::sig_agg::SignatureAggregator;
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
@@ -43,11 +44,22 @@ where
         let id_hash = BlsSigner::<C>::hash_to_g1(id);
         BlsSigner::<C>::with_sk(sk).sign_g1(id_hash.into_group())
     }
+
+    fn decrypt_from_partials(&self, sig_agg: SignatureAggregator<C>, cc: &[u8], epk: &EncPk<C>, partials: Vec<StandaloneSig<C>>) -> Vec<u8> {
+        let id = (cc, epk.epk_bgpk, epk.epk_sig);
+        let id_hash = BlsSigner::<C>::hash_to_g1(id);
+        // TODO
+        // let mut buf = vec![0u8; id.compressed_size()];
+        // id.serialize_compressed(&mut buf[..]).unwrap();
+        // assert!(self.check_epk(epk, &buf));
+        let agg_sig = sig_agg.aggregate_wo_checking(partials);
+        self.verify_unoptimized(&agg_sig, id_hash.into_group());
+        self.decrypt(&cc, &epk, &agg_sig)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::bls::threshold::AggThresholdSig;
     use crate::bls::vanilla::BlsSigner;
     use ark_bls12_381::Bls12_381;
     use ark_std::test_rng;
@@ -56,22 +68,20 @@ mod tests {
     fn test_threshold_pke() {
         let rng = &mut test_rng();
 
-        let (n, t) = (1, 1);
+        let (n, t) = (7, 5);
         let signers: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
         let signers_pks: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
-        let (tvk, bgpk) = crate::tests::simulate_pvss::<Bls12_381, _>(signers_pks, t, rng);
-
-        let signer = &signers[0];
-        let bgpk = bgpk[0];
+        let (tvk, sig_aggregator) = crate::tests::simulate_pvss::<Bls12_381, _>(signers_pks, t, rng);
 
         let pt = crate::bls::tests::pt(rng);
 
         let (cc, epk) = tvk.encrypt_to_threshold(&pt, rng);
 
-        let sig = tvk.partial_decrypt(signer.sk, &cc, &epk);
-        let sig = AggThresholdSig { bls_sig_with_pk: sig, bgpk };
+        let partials: Vec<_> = signers.iter()
+            .map(|s| tvk.partial_decrypt(s.sk, &cc, &epk))
+            .collect();
 
-        let pt_ = tvk.decrypt(&cc, &epk, &sig);
+        let pt_ = tvk.decrypt_from_partials(sig_aggregator, &cc, &epk, partials);
         assert_eq!(pt, pt_);
     }
 }

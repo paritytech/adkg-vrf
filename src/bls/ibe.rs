@@ -72,33 +72,34 @@ impl<C: Pairing> EncPk<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::bls::threshold::AggThresholdSig;
     use crate::bls::vanilla::BlsSigner;
     use ark_bls12_381::Bls12_381;
+    use ark_ec::{AffineRepr, CurveGroup};
     use ark_std::test_rng;
 
     #[test]
     fn test_ibe_key_exchange() {
         let rng = &mut test_rng();
 
-        let (n, t) = (1, 1);
+        let (n, t) = (7, 5);
         let signers: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
         let signers_pks: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
-        let (tvk, bgpk) = crate::tests::simulate_pvss(signers_pks, t, rng);
-
-        let signer = &signers[0];
-        let bgpk = bgpk[0];
+        let (tvk, sig_aggregator) = crate::tests::simulate_pvss(signers_pks, t, rng);
 
         let (ss, epk) = tvk.initiate_key_exchange(b"id", rng);
         assert!(tvk.check_epk(&epk, b"id"));
         assert!(!tvk.check_epk(&epk, b"id2"));
-        let sig = signer.hash_and_sign("id".as_bytes());
-        let sig = AggThresholdSig { bls_sig_with_pk: sig, bgpk };
-        let ss_ = epk.complete_key_exchange(&sig);
+
+        let id_hash = BlsSigner::<Bls12_381>::hash_to_g1("id".as_bytes()).into_group();
+        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(id_hash)).collect();
+        let agg_sig =  sig_aggregator.check_then_aggregate(id_hash.into_affine(), sigs.clone());
+        let ss_ = epk.complete_key_exchange(&agg_sig);
         assert_eq!(ss, ss_);
-        let sig = signer.hash_and_sign("id2".as_bytes());
-        let sig = AggThresholdSig { bls_sig_with_pk: sig, bgpk };
-        let ss_ = epk.complete_key_exchange(&sig);
+
+        let id_hash = BlsSigner::<Bls12_381>::hash_to_g1("id2".as_bytes()).into_group();
+        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(id_hash)).collect();
+        let agg_sig =  sig_aggregator.check_then_aggregate(id_hash.into_affine(), sigs.clone());
+        let ss_ = epk.complete_key_exchange(&agg_sig);
         assert_ne!(ss, ss_);
     }
 }

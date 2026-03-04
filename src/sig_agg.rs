@@ -51,7 +51,7 @@ pub fn aggregate_augmented_sigs<C: Pairing>(
 }
 
 
-/// Converts vanilla BLS signatures to the threshold aggregatable counterparts.
+/// Converts vanilla BLS signatures to the (threshold) aggregatable counterparts.
 /// In order to do that knows the mapping of the vanilla BLS public keys
 /// to the corresponding `bgpk` and the index in the signers list.
 pub struct SignatureAggregator<C: Pairing> {
@@ -80,6 +80,36 @@ impl<C: Pairing> SignatureAggregator<C> {
             pks_mapping,
         }
     }
+
+    /// If the public key is recognized, returns the signer's index `j` and adds `bgpk_j` to the signature.
+    pub fn augment_sig(&self, sig: StandaloneSig<C>) -> Option<(usize, AggThresholdSig<C>)> {
+        self.pks_mapping.get(&sig.pk).map(|(bgpk, j)| (*j, AggThresholdSig {
+            bls_sig_with_pk: sig,
+            bgpk: *bgpk,
+        }))
+    }
+
+    /// Aggregates signatures. Checks that there is a threshold of signers, but doesn't verify the individual signatures.
+    /// If a public key is not recognized, the signature is dropped. Signatures from
+    pub fn aggregate_wo_checking(&self, sigs: Vec<StandaloneSig<C>>) -> AggThresholdSig<C> {
+        let mut augmented_sigs = vec![None; self.pks_mapping.len()];
+        sigs.into_iter().for_each(|sig| {
+            let (j, s) = self.augment_sig(sig).unwrap();
+            augmented_sigs[j] = Some(s);
+        });
+        aggregate_augmented_sigs(augmented_sigs, &self.config)
+    }
+
+    /// Checks that each signature verifies and comes from a legit signer.
+    /// Checks that the threshold is met. TODO: Doesn't allow duplicate signatures?
+    pub fn check_then_aggregate(&self, message: C::G1Affine, sigs: Vec<StandaloneSig<C>>) -> AggThresholdSig<C> {
+        let mut session = self.start_session(message);
+        session.append_verify_sigs(sigs.clone());
+        let augmented_sigs = session.finalize();
+        let threshold_sig = aggregate_augmented_sigs(augmented_sigs, &self.config);
+        threshold_sig
+    }
+
     pub fn start_session(&self, message: C::G1Affine) -> Session<C> {
         Session {
             g2: self.config.g2.into_affine(),
@@ -87,14 +117,6 @@ impl<C: Pairing> SignatureAggregator<C> {
             pks: &self.pks_mapping,
             augmented_sigs: vec![None; self.pks_mapping.len()],
         }
-    }
-
-    pub fn aggregate(&self, message: C::G1Affine, sigs: Vec<StandaloneSig<C>>) -> AggThresholdSig<C> {
-        let mut session = self.start_session(message);
-        session.append_verify_sigs(sigs.clone());
-        let augmented_sigs = session.finalize();
-        let threshold_sig = aggregate_augmented_sigs(augmented_sigs, &self.config);
-        threshold_sig
     }
 }
 

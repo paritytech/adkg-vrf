@@ -93,12 +93,13 @@ mod tests {
 
 
     // Returns threshold verification and aggregation keys
-    pub fn simulate_pvss<C: Pairing, R: Rng>(signers_pks: Vec<C::G2Affine>, t: usize, rng: &mut R) -> (ThresholdVk<C>, Vec<C::G2Affine>) {
+    pub fn simulate_pvss<C: Pairing, R: Rng>(signers_pks: Vec<C::G2Affine>, t: usize, rng: &mut R) -> (ThresholdVk<C>, SignatureAggregator<C>) {
         let pvss = pvss::Params::<C>::new(signers_pks.clone(), t).unwrap();
         let share = pvss.deal(rng).unwrap();
-        let bgpk = share.payload.bgpk.clone();
         let tvk = ThresholdVk::from_share(&share.payload);
-        (tvk, bgpk)
+        let bgpk = share.payload.bgpk;
+        let sig_aggregator = SignatureAggregator::<C>::new(signers_pks.as_slice(), bgpk, pvss.config);
+        (tvk, sig_aggregator)
     }
 
     #[test]
@@ -139,11 +140,11 @@ mod tests {
         let message = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
         let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(message)).collect();
 
-        let threshold_sig_n = sig_aggregator.aggregate(message.into_affine(), sigs.clone());
+        let threshold_sig_n = sig_aggregator.check_then_aggregate(message.into_affine(), sigs.clone());
         let vuf_n = threshold_vk.vuf_unoptimized(&threshold_sig_n, message);
 
         let sigs_t: Vec<_> = sigs.into_iter().take(t).collect();
-        let threshold_sig_t = sig_aggregator.aggregate(message.into_affine(), sigs_t.clone());
+        let threshold_sig_t = sig_aggregator.check_then_aggregate(message.into_affine(), sigs_t.clone());
         let vuf_t = threshold_vk.vuf_unoptimized(&threshold_sig_t, message);
 
         assert_eq!(vuf_t, vuf_t);
