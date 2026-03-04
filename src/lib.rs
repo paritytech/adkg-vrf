@@ -5,7 +5,7 @@ use crate::pvss::SecretSharing;
 use ark_ec::pairing::Pairing;
 use dkg::transcript;
 
-pub mod agg;
+pub mod sig_agg;
 pub mod bls;
 pub mod dkg;
 pub mod koe;
@@ -29,7 +29,7 @@ pub mod koe;
 /// TODO: is there a paper?
 
 /// Aggregatable Publicly Verifiable Secret Sharing Scheme
-mod old_dkg;
+// mod old_dkg;
 pub mod pvss;
 pub mod straus;
 pub mod utils;
@@ -74,7 +74,6 @@ pub type DkgTranscript = transcript::Transcript<ark_bls12_381::Bls12_381>;
 
 #[cfg(test)]
 mod tests {
-    use crate::agg::aggregate_augmented_sigs;
     use crate::bls::threshold::ThresholdVk;
     use crate::bls::vanilla::BlsSigner;
     use crate::dkg::transcript::Transcript;
@@ -90,7 +89,7 @@ mod tests {
     use ark_std::test_rng;
     use ark_std::vec::Vec;
 
-    use crate::agg::SignatureConverter;
+    use crate::sig_agg::SignatureAggregator;
 
 
     // Returns threshold verification and aggregation keys
@@ -135,26 +134,22 @@ mod tests {
 
         let config = keys.config();
         let threshold_vk = ThresholdVk::from_share(&keys.secret_sharing);
-        let sig_converter = SignatureConverter::<Bls12_381>::new(&signers_pks, keys.secret_sharing.bgpk);
+        let sig_aggregator = SignatureAggregator::<Bls12_381>::new(&signers_pks, keys.secret_sharing.bgpk, config);
 
         let message = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
         let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(message)).collect();
 
-        let mut sig_agg_session_n = sig_converter.start_session(message.into_affine());
-        sig_agg_session_n.append_verify_sigs(sigs.clone());
-        let augmented_sigs_n = sig_agg_session_n.finalize();
-        let threshold_sig_n = aggregate_augmented_sigs(augmented_sigs_n, &config);
+        let threshold_sig_n = sig_aggregator.aggregate(message.into_affine(), sigs.clone());
         let vuf_n = threshold_vk.vuf_unoptimized(&threshold_sig_n, message);
 
-        let mut sig_agg_session_t = sig_converter.start_session(message.into_affine());
-        sig_agg_session_t.append_verify_sigs(sigs.into_iter().take(t).collect());
-        let augmented_sigs_t = sig_agg_session_t.finalize();
-        let threshold_sig_t = aggregate_augmented_sigs(augmented_sigs_t, &config);
+        let sigs_t: Vec<_> = sigs.into_iter().take(t).collect();
+        let threshold_sig_t = sig_aggregator.aggregate(message.into_affine(), sigs_t.clone());
         let vuf_t = threshold_vk.vuf_unoptimized(&threshold_sig_t, message);
-        assert_eq!(vuf_t, vuf_n);
+
+        assert_eq!(vuf_t, vuf_t);
 
         let (ss, epk) = threshold_vk.initiate_key_exchange(b"message", rng);
-        let ss_ = epk.complete_key_exchange(&threshold_sig_n);
+        let ss_ = epk.complete_key_exchange(&threshold_sig_t);
         assert_eq!(ss, ss_);
         let ss_ = epk.complete_key_exchange(&threshold_sig_t);
         assert_eq!(ss, ss_);

@@ -1,5 +1,4 @@
 use ark_ec::pairing::Pairing;
-use ark_ec::AffineRepr;
 use ark_ec::VariableBaseMSM;
 use ark_poly::EvaluationDomain;
 use ark_std::Zero;
@@ -55,19 +54,19 @@ pub fn aggregate_augmented_sigs<C: Pairing>(
 /// Converts vanilla BLS signatures to the threshold aggregatable counterparts.
 /// In order to do that knows the mapping of the vanilla BLS public keys
 /// to the corresponding `bgpk` and the index in the signers list.
-pub struct SignatureConverter<C: Pairing> {
-    // to verify BLS sigs with the keys in G2
-    pub(crate) g2: C::G2Affine,
+pub struct SignatureAggregator<C: Pairing> {
+    // PVSS config
+    pub(crate) config: pvss::Config<C>,
     // map bls_pk_j -> (bgpk_j, j)
     pub(crate) pks_mapping: HashMap<C::G2Affine, (C::G2Affine, usize)>,
 }
 
-impl<C: Pairing> SignatureConverter<C> {
-
+impl<C: Pairing> SignatureAggregator<C> {
     /// BLS public keys and the `bgpk`s in the PVSS order.
     pub fn new(
         signer_pks: &[C::G2Affine],
         bgpks: Vec<C::G2Affine>,
+        config: pvss::Config<C>,
     ) -> Self {
         let pks_mapping: HashMap<_, _> = signer_pks
             .iter()
@@ -77,17 +76,25 @@ impl<C: Pairing> SignatureConverter<C> {
             .map(|(j, (signer_pk_j, bgpk_j))| (signer_pk_j, (bgpk_j, j)))
             .collect();
         Self {
-            g2: C::G2Affine::generator(),
-            pks_mapping
+            config,
+            pks_mapping,
         }
     }
     pub fn start_session(&self, message: C::G1Affine) -> Session<C> {
         Session {
-            g2: self.g2,
+            g2: self.config.g2.into_affine(),
             message,
             pks: &self.pks_mapping,
             augmented_sigs: vec![None; self.pks_mapping.len()],
         }
+    }
+
+    pub fn aggregate(&self, message: C::G1Affine, sigs: Vec<StandaloneSig<C>>) -> AggThresholdSig<C> {
+        let mut session = self.start_session(message);
+        session.append_verify_sigs(sigs.clone());
+        let augmented_sigs = session.finalize();
+        let threshold_sig = aggregate_augmented_sigs(augmented_sigs, &self.config);
+        threshold_sig
     }
 }
 
