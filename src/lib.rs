@@ -5,7 +5,7 @@ use crate::pvss::SecretSharing;
 use ark_ec::pairing::Pairing;
 use dkg::transcript;
 
-pub mod agg;
+pub mod sig_agg;
 pub mod bls;
 pub mod dkg;
 pub mod koe;
@@ -29,7 +29,7 @@ pub mod koe;
 /// TODO: is there a paper?
 
 /// Aggregatable Publicly Verifiable Secret Sharing Scheme
-mod old_dkg;
+// mod old_dkg;
 pub mod pvss;
 pub mod straus;
 pub mod utils;
@@ -74,67 +74,32 @@ pub type DkgTranscript = transcript::Transcript<ark_bls12_381::Bls12_381>;
 
 #[cfg(test)]
 mod tests {
-    use crate::bls::threshold::{AggThresholdSig, ThresholdVk};
-    use crate::bls::vanilla::{BlsSigner, StandaloneSig};
+    use crate::bls::threshold::ThresholdVk;
+    use crate::bls::vanilla::BlsSigner;
     use crate::dkg::transcript::Transcript;
     use crate::dkg::Dkg;
     use crate::pvss;
-    use crate::utils::BarycentricDomain;
-    use ark_bls12_381::{Bls12_381, G1Affine, G1Projective};
+
+
+    use ark_bls12_381::{Bls12_381, G1Affine};
     use ark_ec::pairing::Pairing;
-    use ark_ec::{AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
-    use ark_ff::Zero;
-    use ark_poly::EvaluationDomain;
+    use ark_ec::{AffineRepr, CurveGroup};
+
+    use ark_std::rand::Rng;
     use ark_std::test_rng;
     use ark_std::vec::Vec;
-    use hashbrown::HashMap;
 
-    pub fn aggregator<C: Pairing>(
-        signer_pks: &[C::G2Affine],
-        bgpks: Vec<C::G2Affine>,
-    ) -> crate::agg::SignatureAggregator<C> {
-        let pks: HashMap<_, _> = signer_pks
-            .iter()
-            .cloned()
-            .zip(bgpks)
-            .enumerate()
-            .map(|(j, (signer_pk_j, bgpk_j))| (signer_pk_j, (bgpk_j, j)))
-            .collect();
-        crate::agg::SignatureAggregator {
-            g2: C::G2Affine::generator(),
-            pks,
-        }
-    }
+    use crate::sig_agg::SignatureAggregator;
 
-    pub fn aggregate_augmented_sigs<C: Pairing>(
-        augmented_sigs: Vec<Option<AggThresholdSig<C>>>,
-        config: &pvss::Config<C>,
-    ) -> AggThresholdSig<C> {
-        assert_eq!(augmented_sigs.len(), config.n);
-        let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
-        bitmask.resize(config.domain.size(), false);
-        let set_bits_count = bitmask.iter().filter(|b| **b).count();
-        assert!(set_bits_count >= config.t);
-        let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
-            .lagrange_basis_at(C::ScalarField::zero());
-        let augmented_sigs: Vec<AggThresholdSig<C>> =
-            augmented_sigs.into_iter().flatten().collect();
-        let bls_sigs: Vec<_> = augmented_sigs
-            .iter()
-            .map(|s| s.bls_sig_with_pk.sig)
-            .collect();
-        let bls_pks: Vec<_> = augmented_sigs
-            .iter()
-            .map(|s| s.bls_sig_with_pk.pk)
-            .collect();
-        let bgpks: Vec<_> = augmented_sigs.iter().map(|s| s.bgpk).collect();
-        let asig = C::G1::msm(&bls_sigs, &lis).unwrap().into_affine();
-        let apk = C::G2::msm(&bls_pks, &lis).unwrap().into_affine();
-        let abgpk = C::G2::msm(&bgpks, &lis).unwrap().into_affine();
-        AggThresholdSig {
-            bls_sig_with_pk: StandaloneSig { sig: asig, pk: apk },
-            bgpk: abgpk,
-        }
+
+    // Returns threshold verification and aggregation keys
+    pub fn simulate_pvss<C: Pairing, R: Rng>(signers_pks: Vec<C::G2Affine>, t: usize, rng: &mut R) -> (ThresholdVk<C>, SignatureAggregator<C>) {
+        let pvss = pvss::Params::<C>::new(signers_pks.clone(), t).unwrap();
+        let share = pvss.deal(rng).unwrap();
+        let tvk = ThresholdVk::from_share(&share.payload);
+        let bgpk = share.payload.bgpk;
+        let sig_aggregator = SignatureAggregator::<C>::new(signers_pks.as_slice(), bgpk, pvss.config);
+        (tvk, sig_aggregator)
     }
 
     #[test]
@@ -170,22 +135,24 @@ mod tests {
 
         let config = keys.config();
         let threshold_vk = ThresholdVk::from_share(&keys.secret_sharing);
-        let sig_aggregator = aggregator::<Bls12_381>(&signers_pks, keys.secret_sharing.bgpk);
+        let sig_aggregator = SignatureAggregator::<Bls12_381>::new(&signers_pks, keys.secret_sharing.bgpk, config);
 
-        let message = G1Projective::generator();
+        let message = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
         let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(message)).collect();
 
-        let mut sig_agg_session_n = sig_aggregator.start_session(message.into_affine());
-        sig_agg_session_n.append_verify_sigs(sigs.clone());
-        let augmented_sigs_n = sig_agg_session_n.finalize();
-        let threshold_sig_n = aggregate_augmented_sigs(augmented_sigs_n, &config);
+        let threshold_sig_n = sig_aggregator.check_then_aggregate(message.into_affine(), sigs.clone());
         let vuf_n = threshold_vk.vuf_unoptimized(&threshold_sig_n, message);
 
-        let mut sig_agg_session_t = sig_aggregator.start_session(message.into_affine());
-        sig_agg_session_t.append_verify_sigs(sigs.into_iter().take(t).collect());
-        let augmented_sigs_t = sig_agg_session_t.finalize();
-        let threshold_sig_t = aggregate_augmented_sigs(augmented_sigs_t, &config);
+        let sigs_t: Vec<_> = sigs.into_iter().take(t).collect();
+        let threshold_sig_t = sig_aggregator.check_then_aggregate(message.into_affine(), sigs_t.clone());
         let vuf_t = threshold_vk.vuf_unoptimized(&threshold_sig_t, message);
-        assert_eq!(vuf_t, vuf_n);
+
+        assert_eq!(vuf_t, vuf_t);
+
+        let (ss, epk) = threshold_vk.initiate_key_exchange(b"message", rng);
+        let ss_ = epk.complete_key_exchange(&threshold_sig_t);
+        assert_eq!(ss, ss_);
+        let ss_ = epk.complete_key_exchange(&threshold_sig_t);
+        assert_eq!(ss, ss_);
     }
 }

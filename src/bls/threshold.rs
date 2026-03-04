@@ -8,12 +8,12 @@ use crate::pvss::SecretSharing;
 // `c = f(0).g1` is the public key associated with the dealing.
 // `(h1, h2)` bind signers to the dealing via `bgpk_j = gsk_j + sk_j.h2`.
 pub struct ThresholdVk<C: Pairing> {
-    c: C::G1Affine,
-    h1: C::G1Affine,
-    h2: C::G2Affine,
+    pub c: C::G1Affine,
+    pub h1: C::G1Affine,
+    pub h2: C::G2Affine,
     // todo: skip serialization
-    g1: C::G1,
-    g2: C::G2,
+    pub g1: C::G1,
+    pub g2: C::G2,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -128,7 +128,7 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
         }
     }
 
-    pub fn aggregator(&self, final_share: DkgResult<C>) -> crate::agg::SignatureAggregator<C> {
+    pub fn aggregator(&self, final_share: DkgResult<C>) -> crate::agg::SignatureConverter<C> {
         let pks: HashMap<_, _> = self
             .bls_pks
             .iter()
@@ -137,9 +137,9 @@ impl<'a, C: Pairing, D: EvaluationDomain<C::ScalarField>> Ceremony<'a, C, D> {
             .enumerate()
             .map(|(j, (bls_pk_j, bgpk_j))| (bls_pk_j, (bgpk_j, j)))
             .collect();
-        crate::agg::SignatureAggregator {
+        crate::agg::SignatureConverter {
             g2: self.g2.into_affine(),
-            pks,
+            pks_mapping: pks,
         }
     }
 }
