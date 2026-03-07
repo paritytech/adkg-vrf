@@ -79,6 +79,12 @@ impl<C: Pairing> BlsSigner<C> {
         }
     }
 
+    pub fn sign_g2(&self, m: C::G2) -> C::G2Affine {
+        let sig = m * self.sk;
+        let sig = sig.into_affine();
+        sig
+    }
+
     pub fn pk_in_g1(&self) -> (C::ScalarField, C::G1Affine) {
         (self.sk, self.bls_pk_g1)
     }
