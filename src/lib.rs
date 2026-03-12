@@ -40,6 +40,7 @@ pub mod pvss;
 pub mod sig_agg;
 pub mod straus;
 pub mod utils;
+mod bs_dkg;
 
 pub struct ThresholdCrypto<C: Pairing> {
     secret_sharing: SecretSharing<C>,
@@ -140,18 +141,16 @@ mod tests {
     use crate::dkg::Dkg;
     use crate::{aggregate_sigs, pvss, Sig, Tpk};
 
+    use crate::bs_dkg::{BsDkg, BsKeys};
+    use crate::sig_agg::SignatureAggregator;
     use ark_bls12_381::{Bls12_381, Fr, G1Affine, G2Affine, G2Projective};
     use ark_ec::pairing::Pairing;
-    use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-    use ark_ff::Zero;
+    use ark_ec::{AffineRepr, CurveGroup};
     use ark_std::iterable::Iterable;
     use ark_std::rand::Rng;
     use ark_std::test_rng;
     use ark_std::vec::Vec;
     use ark_std::UniformRand;
-
-    use crate::sig_agg::SignatureAggregator;
-    use crate::utils::BarycentricDomain;
 
     // Returns threshold verification and aggregation keys
     pub fn simulate_pvss<C: Pairing, R: Rng>(
@@ -167,6 +166,15 @@ mod tests {
             SignatureAggregator::<C>::new(signers_pks.as_slice(), bgpk, pvss.config);
         (tvk, sig_aggregator)
     }
+
+    // TODO:
+    // 1. signers' pks in g1
+    // 2. signer's produce tweaks
+    // 3. tweaks are verified, aggregated and applied
+    // 4. new key material type
+    // 5. new signature type
+    // 6. aggregation for that
+    // basically 2 cryptosuites, ideally with a fall-back option
 
     #[test]
     fn test_back_sharing() {
@@ -235,24 +243,15 @@ mod tests {
         let signers_pks_g2_1: Vec<_> = signers_1.iter().map(|s| s.bls_pk_g2).collect();
         let signers_pks_g1_1: Vec<_> = signers_1.iter().map(|s| s.bls_pk_g1).collect();
 
-        let dkg_1 = Dkg::<Bls12_381>::new(
-            signers_pks_g2_1.clone(),
-            t,
-            dealer_pks.clone(),
-            dealer_pks.len(),
-        )
-        .unwrap();
-        let ssk_1 = Fr::rand(rng);
-        let sh_1 = Fr::rand(rng);
-        let ss_1 = dkg_1.pvss.deal_secrets(ssk_1, sh_1, rng).unwrap().payload;
-        let tpk_1 = ThresholdVk::from_share(&ss_1);
-        let sh_1_back = Fr::rand(rng);
-        let ss_1_back = dkg_0
-            .pvss
-            .deal_secrets(ssk_1, sh_1_back, rng)
-            .unwrap()
-            .payload;
+        let curr_ss = pvss::Params::<Bls12_381>::new(signers_pks_g2_0, t).unwrap();
+        let next_ss = pvss::Params::<Bls12_381>::new(signers_pks_g2_1, t).unwrap();
+        let bs_dkg = BsDkg::init(curr_ss, next_ss);
 
+        let bst = bs_dkg.deal(signers_0[0].clone(), rng).unwrap();
+        let ss_1 = bst.next_sharing.agg_ss.payload;
+        let ss_1_back = bst.back_sharing.agg_ss.payload;
+
+        let tpk_1 = ThresholdVk::from_share(&ss_1);
         let h2_pred_1 = G2Affine::rand(rng); // hash_to_curve(C||1)
 
         let tweaks_1: Vec<_> = signers_1
@@ -264,13 +263,16 @@ mod tests {
             .map(|s| s.sign_g2(h2_pred_0 - ss_1_back.h2))
             .collect();
 
-        let bgpk_mod_1: Vec<G2Projective> = ss_1
-            .bgpk
-            .into_iter()
-            .zip(tweaks_1)
-            .map(|(bgpk_1, tweaks_1)| bgpk_1 + tweaks_1)
-            .collect();
-        let bgpk_mod_1 = G2Projective::normalize_batch(&bgpk_mod_1);
+        let key0 = BsKeys {
+            c: tpk_0.c,
+            bgpk:bgpk_mod_0.clone(),
+            h2: h2_pred_0,
+        };
+        let key1 = BsDkg::tweak(&ss_1, tweaks_1, h2_pred_1);
+        let key1_back = BsDkg::tweak(&ss_1_back, tweaks_back_1.clone(), h2_pred_0);
+        let bgpk_delta = bs_dkg.compute_delta(&key0, &key1_back);
+
+        let bgpk_mod_1 = key1.bgpk;
         let tpk_mod_1 = Tpk {
             c: tpk_1.c,
             h2: h2_pred_1,
@@ -278,21 +280,10 @@ mod tests {
             g2: tpk_0.g2,
         };
 
+
         let sigs: Vec<_> = signers_1.iter().map(|s| s.sign_g1(message)).collect();
         let agg_sig_mod_1 = aggregate_sigs(sigs, signers_pks_g1_1, bgpk_mod_1, &dkg_0.pvss.config);
         tpk_mod_1.verify_sig(&agg_sig_mod_1, message, h2_pred_1);
-
-        let bgpk_deltas: Vec<G2Projective> = ss_1_back
-            .bgpk
-            .into_iter()
-            .zip(tweaks_back_1)
-            .zip(bgpk_mod_0)
-            .map(|((bgpk_back_1, tweak_back_1), bgpk_0)| bgpk_back_1 + tweak_back_1 - bgpk_0)
-            .collect();
-        let bgpk_deltas = G2Projective::normalize_batch(&bgpk_deltas);
-        let lis = BarycentricDomain::of_size(dkg_0.pvss.config.domain, dkg_0.pvss.config.n)
-            .lagrange_basis_at(Fr::zero());
-        let bgpk_delta = G2Projective::msm(&bgpk_deltas, &lis).unwrap();
 
         let tpk_1_pred: Tpk<Bls12_381> = Tpk {
             c: c_perm,

@@ -40,6 +40,7 @@ pub fn verify_on_point<C: Pairing>(
     C::multi_pairing([minus_g1, pk], [sig, point]).is_zero()
 }
 
+#[derive(Clone)]
 pub struct BlsSigner<C: Pairing> {
     pub sk: C::ScalarField,
     pub bls_pk_g1: C::G1Affine,
