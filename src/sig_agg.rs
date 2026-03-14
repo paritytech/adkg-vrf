@@ -118,6 +118,16 @@ impl<C: Pairing> SignatureAggregator<C> {
             augmented_sigs: vec![None; self.pks_mapping.len()],
         }
     }
+
+    pub fn aggregate_tweaks(&self, _message: C::G2Affine, sigs: &[(C::G2Affine, C::G2Affine)]) -> Vec<Option<C::G2Affine>> {
+        let mut tweaked_bgpks = vec![None; self.config.n];
+        for (sig, pk) in sigs {
+            // TODO: check the sig
+            let (bgpk, j) = *self.pks_mapping.get(pk).unwrap();
+            tweaked_bgpks[j] = Some((bgpk + sig).into_affine()); // TODO: batch
+        }
+        tweaked_bgpks
+    }
 }
 
 pub struct Session<'a, C: Pairing> {

@@ -1,8 +1,7 @@
 use crate::bls::vanilla::BlsSigner;
 use crate::dkg::transcript::{ContributionReceipt, Transcript};
-use crate::pvss;
-use crate::pvss::SecretSharing;
 use crate::utils::BarycentricDomain;
+use crate::{pvss, VerifiedBackSharing, VerifiedSharing};
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
@@ -35,7 +34,7 @@ pub struct BsTranscript<C: Pairing> {
 }
 
 pub struct BsDkg<C: Pairing> {
-    pub curr: pvss::Params<C>,
+    pub back: pvss::Params<C>,
     pub next: pvss::Params<C>,
 }
 
@@ -46,14 +45,14 @@ where
 {
     pub fn init(curr: pvss::Params<C>, next: pvss::Params<C>) -> Self {
         Self {
-            curr,
+            back: curr,
             next,
         }
     }
 
     fn next(self, next: pvss::Params<C>) -> Self {
         Self {
-            curr: self.next,
+            back: self.next,
             next,
         }
     }
@@ -74,7 +73,7 @@ where
         };
 
         let bs_sh = C::ScalarField::rand(rng);
-        let bs_ss = self.curr.deal_secrets(ssk, bs_sh, rng)?;
+        let bs_ss = self.back.deal_secrets(ssk, bs_sh, rng)?;
         let bs_receipt = ContributionReceipt::<C>::sign((ssk, bs_ss.payload.c), (bs_sh, bs_ss.payload.h1), (dealer.sk, dealer.bls_pk_g1));
         let back_sharing = Transcript {
             agg_ss: bs_ss,
@@ -84,18 +83,22 @@ where
         Ok(BsTranscript { back_sharing, next_sharing })
     }
 
-    fn verify<R: Rng>(&self, transcript: &BsTranscript<C>, rng: &mut R) {}
-
-    pub fn tweak(ss: &SecretSharing<C>, tweaks: Vec<C::G2Affine>, h2_pred: C::G2Affine) -> BsKeys<C> {
-        let tweaked_bgpks: Vec<C::G2> = ss.bgpk.iter()
-            .zip(tweaks)
-            .map(|(bgpk, tweak)| *bgpk + tweak)
-            .collect();
-        let tweaked_bgpks = C::G2::normalize_batch(&tweaked_bgpks);
-        BsKeys {
-            c: ss.c,
-            bgpk: tweaked_bgpks,
-            h2: h2_pred,
+    pub fn verify<R: Rng>(&self, bs_transcript: BsTranscript<C>, _rng: &mut R) -> VerifiedBackSharing<C> {
+        let BsTranscript {
+            back_sharing,
+            next_sharing,
+        } = bs_transcript;
+        let back_sharing = VerifiedSharing {
+            secret_sharing: back_sharing.agg_ss.payload,
+            params: self.back.clone(),
+        };
+        let next_sharing = VerifiedSharing {
+            secret_sharing: next_sharing.agg_ss.payload,
+            params: self.next.clone(),
+        };
+        VerifiedBackSharing {
+            back_sharing,
+            next_sharing,
         }
     }
 
@@ -105,7 +108,7 @@ where
             .map(|(curr, bs_next)| *bs_next - curr)
             .collect();
         let bgpk_deltas = C::G2::normalize_batch(&bgpk_deltas);
-        let lis_at_zero = BarycentricDomain::of_size(self.curr.config.domain, self.curr.config.n)
+        let lis_at_zero = BarycentricDomain::of_size(self.back.config.domain, self.back.config.n)
             .lagrange_basis_at(C::ScalarField::zero());
         C::G2::msm(&bgpk_deltas, &lis_at_zero).unwrap()
             .into_affine()

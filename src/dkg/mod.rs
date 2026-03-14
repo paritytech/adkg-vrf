@@ -2,7 +2,7 @@ pub mod aggregator;
 pub mod transcript;
 
 use crate::pvss::SecretSharingWithWitness;
-use crate::{pvss, ThresholdCrypto};
+use crate::{pvss, VerifiedSharing};
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
@@ -138,12 +138,12 @@ where
         self.authorized_contributions(t).len() >= self.t_dkg
     }
 
-    pub fn finalize<R: Rng>(self, t: Transcript<C>, rng: &mut R) -> Result<ThresholdCrypto<C>, ()> {
+    pub fn finalize<R: Rng>(self, t: Transcript<C>, rng: &mut R) -> Result<VerifiedSharing<C>, ()> {
         if !self.enough_contributions(&t) {
             return Err(());
         }
         self.verify(&t, rng)?;
-        Ok(ThresholdCrypto {
+        Ok(VerifiedSharing {
             secret_sharing: t.agg_ss.payload,
             params: self.pvss,
         })
