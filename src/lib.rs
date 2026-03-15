@@ -127,9 +127,10 @@ pub struct TweakedSharing<C: Pairing> {
 }
 
 impl<C: Pairing> TweakedSharing<C> {
-    /// We have `f0` of degree `t0 - 1`  and `f1` of degree `t1 - 1`.
-    /// We know evaluations of the both at `n0 >= t0` points.
-    /// We want to compute (f1 - f0)(0)
+    /// Computes the threshold public key delta. This is (f0(0) - f1_back(0)).g1
+    /// `deg(f0) = deg(f1_back) = t0 - 1`.
+    /// Thus both the current sharing and the back-shared one should have `t0` tweaked bgpks at the same positions.
+    /// TODO: check for that
     pub fn compute_delta(&self, bs_next: &Self) -> C::G2Affine {
         let bgpk_deltas: Vec<C::G2> = self.tweaked_bgpks.iter()
             .zip(bs_next.tweaked_bgpks.iter())
@@ -269,10 +270,6 @@ mod tests {
     fn test_back_sharing() {
         let rng = &mut test_rng();
 
-        // let dealers: Vec<_> = (0..1).map(|_| BlsSigner::<Bls12_381>::new(rng)).collect();
-        // let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.bls_pk_g1).collect();
-
-
         // Protocol and the participants
         let (n, t) = (7, 5);
 
@@ -294,7 +291,7 @@ mod tests {
         };
         let bs_dkg = BsDkg::init(curr, next);
 
-        // Deals secret shares to the epoch#1 committee (no-one to backshare to)
+        // Deals secret shares to the epoch #1 committee (no-one to backshare to)
         let transcript = bs_dkg.deal_first(signers_0[0].clone(), rng).unwrap();
         let ss_0 = bs_dkg.verify_first(transcript, rng);
         let config_0 = ss_0.verified_sharing.params.config.clone();
@@ -308,6 +305,7 @@ mod tests {
         let agg_sig_0 = sig_aggregator_0.aggregate_wo_checking(sigs.clone());
         tpk_0.verify_unoptimized(&agg_sig_0, msg);
 
+        // Tweaks the key material (`bgpks` and `h2`)
         let tweak_msg_0 = ss_0.tweak_msg();
         let tweaks_0: Vec<_> = signers_0.iter()
             .map(|s| (s.sign_g2(tweak_msg_0), s.bls_pk_g2))
@@ -336,7 +334,7 @@ mod tests {
         let ss_1 = verified_bs.next_sharing;
         let h2_pred_1 = ss_1.h2_pred;
         let mut ss_1_back = verified_bs.back_sharing;
-        ss_1_back.h2_pred = h2_pred_0;
+        ss_1_back.h2_pred = h2_pred_0; //TODO: that's a hack
         let tpk_1 = ThresholdVk::from_share(&ss_1.verified_sharing.secret_sharing);
 
         // TWEAKS

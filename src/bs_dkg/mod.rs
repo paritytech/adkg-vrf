@@ -74,6 +74,9 @@ where
         C::G2Affine::generator() // TODO
     }
 
+    /// The same secret `ssk = f(0).g1` is
+    /// 1. shared to the next committee with specified threshold `self.next.params.config.t`,
+    /// 2. back-shared to the current committee with THEIR threshold `self.curr.params.config.t`.
     pub fn deal<R: Rng>(&self, dealer: BlsSigner<C>, rng: &mut R) -> Result<BsTranscript<C>, ()> {
         let ssk = C::ScalarField::rand(rng);
 
