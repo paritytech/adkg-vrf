@@ -1,7 +1,7 @@
 use crate::bls::vanilla::BlsSigner;
 use crate::dkg::deal_and_sign;
 use crate::dkg::transcript::{ContributionReceipt, Transcript};
-use crate::{pvss, VerifiedBackSharing, VerifiedSharing};
+use crate::{pvss, VerifiedSharing, VerifiedSharingAndBack, VerifiedSharingWithG1Keys};
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
@@ -26,15 +26,29 @@ use ark_std::UniformRand;
 
 /// The implementation assumes that the set of dealers for the next round is the current set of signers.
 
+/// To make back-sharing useful, signers are assumed to publish their BLS public keys both in G1 and G2.
+pub struct Committee<C: Pairing> {
+    /// Contains a list of signers' public keys in G2, specifies the threshold.
+    pub params: pvss::Params<C>,
+    /// Public keys of the same signers but in G1, in the same order, verified for consistency.
+    pub signers_g1: Vec<C::G1Affine>,
+}
+
 pub struct BsTranscript<C: Pairing> {
-    //
     pub back_sharing: Transcript<C>,
     pub next_sharing: Transcript<C>,
 }
 
 pub struct BsDkg<C: Pairing> {
-    pub back: pvss::Params<C>,
-    pub next: pvss::Params<C>,
+    /// Current set of signers (aka committee). Jointly know the secret of their epoch
+    /// They share the new secret among the next set of signers,
+    /// AND separately (via a different polynomial) "backshare" among themselves.
+    /// Knowing the secrets of the 2 consecutive epochs, they
+    /// collectively produce a key able to mutate threshold signatures produced by the different committees,
+    /// that, in turn, keeps the public key persistent for a committee with evolving members.
+    pub curr: Committee<C>,
+    /// Next generation set of signers.
+    pub next: Committee<C>,
 }
 
 impl<C: Pairing> BsDkg<C>
@@ -42,16 +56,16 @@ where
     <C::G2 as CurveGroup>::Config: WBConfig,
     WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
-    pub fn init(curr: pvss::Params<C>, next: pvss::Params<C>) -> Self {
+    pub fn init(curr: Committee<C>, next: Committee<C>) -> Self {
         Self {
-            back: curr,
+            curr,
             next,
         }
     }
 
-    fn next(self, next: pvss::Params<C>) -> Self {
+    fn next(self, next: Committee<C>) -> Self {
         Self {
-            back: self.next,
+            curr: self.next,
             next,
         }
     }
@@ -64,7 +78,7 @@ where
         let ssk = C::ScalarField::rand(rng);
 
         let sh = C::ScalarField::rand(rng);
-        let ss = self.next.deal_secrets(ssk, sh, rng)?;
+        let ss = self.next.params.deal_secrets(ssk, sh, rng)?;
         let receipt = ContributionReceipt::<C>::sign((ssk, ss.payload.c), (sh, ss.payload.h1), (dealer.sk, dealer.bls_pk_g1));
         let next_sharing = Transcript {
             agg_ss: ss,
@@ -72,7 +86,7 @@ where
         };
 
         let bs_sh = C::ScalarField::rand(rng);
-        let bs_ss = self.back.deal_secrets(ssk, bs_sh, rng)?;
+        let bs_ss = self.curr.params.deal_secrets(ssk, bs_sh, rng)?;
         let bs_receipt = ContributionReceipt::<C>::sign((ssk, bs_ss.payload.c), (bs_sh, bs_ss.payload.h1), (dealer.sk, dealer.bls_pk_g1));
         let back_sharing = Transcript {
             agg_ss: bs_ss,
@@ -83,34 +97,49 @@ where
     }
 
     pub fn deal_first<R: Rng>(&self, dealer: BlsSigner<C>, rng: &mut R) -> Result<Transcript<C>, ()> {
-        deal_and_sign(&self.back, rng, (dealer.sk, dealer.bls_pk_g1))
+        deal_and_sign(&self.curr.params, rng, (dealer.sk, dealer.bls_pk_g1))
     }
 
     // TODO: this is a stub
-    pub fn verify<R: Rng>(&self, bs_transcript: BsTranscript<C>, _rng: &mut R) -> VerifiedBackSharing<C> {
+    pub fn verify<R: Rng>(&self, bs_transcript: BsTranscript<C>, rng: &mut R) -> VerifiedSharingAndBack<C> {
         let BsTranscript {
             back_sharing,
             next_sharing,
         } = bs_transcript;
         let back_sharing = VerifiedSharing {
             secret_sharing: back_sharing.agg_ss.payload,
-            params: self.back.clone(),
+            params: self.curr.params.clone(),
+        };
+        let back_sharing = VerifiedSharingWithG1Keys {
+            verified_sharing: back_sharing,
+            signers_g1: self.curr.signers_g1.clone(),
+            h2_pred: C::G2Affine::rand(rng),
         };
         let next_sharing = VerifiedSharing {
             secret_sharing: next_sharing.agg_ss.payload,
-            params: self.next.clone(),
+            params: self.next.params.clone(),
         };
-        VerifiedBackSharing {
+        let next_sharing = VerifiedSharingWithG1Keys {
+            verified_sharing: next_sharing,
+            signers_g1: self.curr.signers_g1.clone(),
+            h2_pred: C::G2Affine::rand(rng),
+        };
+        VerifiedSharingAndBack {
             back_sharing,
             next_sharing,
         }
     }
 
     // TODO: this is a stub
-    pub fn verify_first<R: Rng>(&self, s_transcript: Transcript<C>, _rng: &mut R) -> VerifiedSharing<C> {
-        VerifiedSharing {
+    pub fn verify_first<R: Rng>(&self, s_transcript: Transcript<C>, rng: &mut R) -> VerifiedSharingWithG1Keys<C> {
+        let verified_sharing = VerifiedSharing {
             secret_sharing: s_transcript.agg_ss.payload,
-            params: self.back.clone(),
+            params: self.curr.params.clone(),
+        };
+        VerifiedSharingWithG1Keys {
+            verified_sharing,
+            signers_g1: self.curr.signers_g1.clone(),
+            h2_pred: C::G2Affine::rand(rng), // TODO: make predictable
         }
     }
 }
