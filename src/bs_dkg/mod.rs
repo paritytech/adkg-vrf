@@ -1,12 +1,11 @@
 use crate::bls::vanilla::BlsSigner;
+use crate::dkg::deal_and_sign;
 use crate::dkg::transcript::{ContributionReceipt, Transcript};
-use crate::utils::BarycentricDomain;
 use crate::{pvss, VerifiedBackSharing, VerifiedSharing};
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
-use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::Zero;
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 
@@ -83,6 +82,11 @@ where
         Ok(BsTranscript { back_sharing, next_sharing })
     }
 
+    pub fn deal_first<R: Rng>(&self, dealer: BlsSigner<C>, rng: &mut R) -> Result<Transcript<C>, ()> {
+        deal_and_sign(&self.back, rng, (dealer.sk, dealer.bls_pk_g1))
+    }
+
+    // TODO: this is a stub
     pub fn verify<R: Rng>(&self, bs_transcript: BsTranscript<C>, _rng: &mut R) -> VerifiedBackSharing<C> {
         let BsTranscript {
             back_sharing,
@@ -102,16 +106,12 @@ where
         }
     }
 
-    pub fn compute_delta(&self, curr_keys: &BsKeys<C>, bs_next_keys: &BsKeys<C>) -> C::G2Affine {
-        let bgpk_deltas: Vec<C::G2> = curr_keys.bgpk.iter()
-            .zip(bs_next_keys.bgpk.iter())
-            .map(|(curr, bs_next)| *bs_next - curr)
-            .collect();
-        let bgpk_deltas = C::G2::normalize_batch(&bgpk_deltas);
-        let lis_at_zero = BarycentricDomain::of_size(self.back.config.domain, self.back.config.n)
-            .lagrange_basis_at(C::ScalarField::zero());
-        C::G2::msm(&bgpk_deltas, &lis_at_zero).unwrap()
-            .into_affine()
+    // TODO: this is a stub
+    pub fn verify_first<R: Rng>(&self, s_transcript: Transcript<C>, _rng: &mut R) -> VerifiedSharing<C> {
+        VerifiedSharing {
+            secret_sharing: s_transcript.agg_ss.payload,
+            params: self.back.clone(),
+        }
     }
 }
 
