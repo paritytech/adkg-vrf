@@ -1,7 +1,6 @@
-use crate::bls::vanilla::{hash_to_curve, sign_point, verify_on_point};
+use crate::bls::vanilla::{sign_point, verify_on_point};
+use crate::hash_to_curve::PairingWithG2Map;
 use crate::pvss::SecretSharingWithWitness;
-use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
-use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
 use ark_ec::{CurveGroup, PrimeGroup, VariableBaseMSM};
 use std::hash::{Hash, Hasher};
@@ -34,10 +33,7 @@ pub struct ContributionReceipt<C: Pairing> {
     sig_pk: C::G2Affine,
 }
 
-impl<C: Pairing> ContributionReceipt<C>
-where
-    <C::G2 as CurveGroup>::Config: WBConfig,
-    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
+impl<C: PairingWithG2Map> ContributionReceipt<C>
 {
     pub fn sign(
         c: (C::ScalarField, C::G1Affine),
@@ -45,7 +41,7 @@ where
         dealer: (C::ScalarField, C::G1Affine),
     ) -> Self {
         let public_keys = (c.1, h1.1, dealer.1);
-        let message_hash = hash_to_curve::<C::G2, _>(public_keys);
+        let message_hash = C::hash_serializable_to_g2(&public_keys).unwrap();
         Self {
             c: c.1,
             h1: h1.1,
@@ -58,7 +54,7 @@ where
 
     fn hash_pks(&self) -> C::G2Affine {
         let public_keys = (self.c, self.h1, self.dealer_pk);
-        hash_to_curve::<C::G2, _>(public_keys)
+        C::hash_serializable_to_g2(&public_keys).unwrap()
     }
 
     pub fn verify_all_sigs(&self) -> Result<(), ()> {

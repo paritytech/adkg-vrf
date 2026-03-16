@@ -1,29 +1,11 @@
-use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
-use ark_ec::hashing::map_to_curve_hasher::{MapToCurve, MapToCurveBasedHasher};
-use ark_ec::hashing::HashToCurve;
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::field_hashers::DefaultFieldHasher;
 use ark_ff::Zero;
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 
-use sha2::Sha256;
-
-pub fn hash_to_curve<C: CurveGroup, M: CanonicalSerialize>(m: M) -> C::Affine
-where
-    C::Config: WBConfig,
-    WBMap<C::Config>: MapToCurve<C>,
-{
-    let mut m_bytes = vec![0; m.compressed_size()];
-    m.serialize_compressed(&mut m_bytes[..]).unwrap();
-    let wb_to_curve =
-        MapToCurveBasedHasher::<C, DefaultFieldHasher<Sha256, 128>, WBMap<C::Config>>::new(&[123]) // TODO: domain?
-            .unwrap();
-    let m_hash = wb_to_curve.hash(&m_bytes).unwrap();
-    m_hash
-}
+use crate::PairingWithG1Map;
 
 pub fn sign_point<C: AffineRepr>(sk: C::ScalarField, point: C) -> C {
     let sig = point * sk;
@@ -91,13 +73,10 @@ impl<C: Pairing> BlsSigner<C> {
     }
 }
 
-impl<C: Pairing> BlsSigner<C>
-where
-    <C::G1 as CurveGroup>::Config: WBConfig,
-    WBMap<<C::G1 as CurveGroup>::Config>: MapToCurve<C::G1>,
+impl<C: PairingWithG1Map> BlsSigner<C>
 {
-    pub fn hash_to_g1<M: CanonicalSerialize>(m: M) -> C::G1Affine {
-        hash_to_curve(m)
+    pub fn hash_to_g1<M: CanonicalSerialize>(msg: M) -> C::G1Affine {
+        C::hash_serializable_to_g1(&msg).unwrap()
     }
 
     pub fn hash_and_sign<M: CanonicalSerialize>(&self, m: M) -> StandaloneSig<C> {

@@ -1,6 +1,7 @@
 pub mod aggregator;
 pub mod transcript;
 
+use crate::hash_to_curve::PairingWithG2Map;
 use crate::pvss::SecretSharingWithWitness;
 use crate::{pvss, VerifiedSharing};
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
@@ -27,14 +28,11 @@ pub struct Dkg<C: Pairing> {
 }
 
 /// A dealer not interested in further participation in the protocol (aggregating transcripts) can call this.
-pub fn deal_and_sign<C: Pairing, R: Rng>(
+pub fn deal_and_sign<C: PairingWithG2Map, R: Rng>(
     pvss: &pvss::Params<C>,
     rng: &mut R,
     dealer: (C::ScalarField, C::G1Affine),
 ) -> Result<Transcript<C>, ()>
-where
-    <C::G2 as CurveGroup>::Config: WBConfig,
-    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
 {
     let ssk = C::ScalarField::rand(rng);
     let sh = C::ScalarField::rand(rng);

@@ -42,6 +42,9 @@ pub mod straus;
 pub mod utils;
 mod bs_dkg;
 
+mod hash_to_curve;
+pub use hash_to_curve::PairingWithG1Map;
+
 /// Verified aggregated secret shared to a list of signers with a specified threshold.
 /// Has all the data required to aggregate or verify threshold signatures for a single committee.
 /// Contains signers' BLS public keys only in G2,

@@ -1,10 +1,8 @@
 use crate::dkg;
 use crate::dkg::transcript::{ContributionReceipt, Transcript};
+use crate::hash_to_curve::CurveWithPairingAndHash;
 use crate::pvss::SecretSharingWithWitness;
-use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
-use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
-use ark_ec::CurveGroup;
 use ark_std::rand::Rng;
 use hashbrown::{HashMap, HashSet};
 
@@ -18,10 +16,7 @@ pub struct TranscriptAggregator<C: Pairing> {
     receipts: HashMap<ContributionReceipt<C>, u32>,
 }
 
-impl<C: Pairing> TranscriptAggregator<C>
-where
-    <C::G2 as CurveGroup>::Config: WBConfig,
-    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
+impl<C: CurveWithPairingAndHash> TranscriptAggregator<C>
 {
     pub fn new(dkg: dkg::Dkg<C>, dealer_pks: Vec<C::G1Affine>) -> Self {
         Self {
