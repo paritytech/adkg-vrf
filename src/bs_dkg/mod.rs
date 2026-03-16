@@ -1,3 +1,5 @@
+pub mod crypto;
+
 use crate::bls::vanilla::BlsSigner;
 use crate::dkg::deal_and_sign;
 use crate::dkg::transcript::{ContributionReceipt, Transcript};
