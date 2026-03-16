@@ -284,7 +284,7 @@ mod tests {
         let signers_pks_g2_1: Vec<_> = signers_1.iter().map(|s| s.bls_pk_g2).collect();
         let signers_pks_g1_1: Vec<_> = signers_1.iter().map(|s| s.bls_pk_g1).collect();
 
-        let curr = Committee {
+        let first = Committee {
             params: pvss::Params::<Bls12_381>::new(signers_pks_g2_0.clone(), t).unwrap(),
             signers_g1: signers_pks_g1_0.clone(),
         };
@@ -292,7 +292,7 @@ mod tests {
             params: pvss::Params::<Bls12_381>::new(signers_pks_g2_1.clone(), t).unwrap(),
             signers_g1: signers_pks_g1_1.clone(),
         };
-        let bs_dkg = BsDkg::init(curr, next);
+        let bs_dkg = BsDkg::start(first);
 
         // Deals secret shares to the epoch #1 committee (no-one to backshare to)
         let transcript = bs_dkg.deal_first(signers_0[0].clone(), rng).unwrap();
@@ -332,12 +332,12 @@ mod tests {
         tpk_mod_0.verify_sig(&agg_sig_mod_0, msg, h2_pred_0);
 
 
+        let bs_dkg = bs_dkg.next(next);
         let bs_transcript = bs_dkg.deal(signers_0[0].clone(), rng).unwrap();
         let verified_bs = bs_dkg.verify(bs_transcript, rng);
         let ss_1 = verified_bs.next_sharing;
         let h2_pred_1 = ss_1.h2_pred;
         let mut ss_1_back = verified_bs.back_sharing;
-        ss_1_back.h2_pred = h2_pred_0; //TODO: that's a hack
         let tpk_1 = ThresholdVk::from_share(&ss_1.verified_sharing.secret_sharing);
 
         // TWEAKS

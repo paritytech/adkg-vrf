@@ -1,11 +1,10 @@
 use crate::bls::vanilla::BlsSigner;
 use crate::dkg::deal_and_sign;
 use crate::dkg::transcript::{ContributionReceipt, Transcript};
+use crate::hash_to_curve::PairingWithG2Map;
 use crate::{pvss, VerifiedSharing, VerifiedSharingAndBack, VerifiedSharingWithG1Keys};
-use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
-use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::AffineRepr;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 
@@ -27,6 +26,7 @@ use ark_std::UniformRand;
 /// The implementation assumes that the set of dealers for the next round is the current set of signers.
 
 /// To make back-sharing useful, signers are assumed to publish their BLS public keys both in G1 and G2.
+#[derive(Clone, Debug)]
 pub struct Committee<C: Pairing> {
     /// Contains a list of signers' public keys in G2, specifies the threshold.
     pub params: pvss::Params<C>,
@@ -35,11 +35,14 @@ pub struct Committee<C: Pairing> {
 }
 
 pub struct BsTranscript<C: Pairing> {
+    pub session_id: u64,
     pub back_sharing: Transcript<C>,
     pub next_sharing: Transcript<C>,
 }
 
 pub struct BsDkg<C: Pairing> {
+    /// id of the next committee
+    pub session_id: u64,
     /// Current set of signers (aka committee). Jointly know the secret of their epoch
     /// They share the new secret among the next set of signers,
     /// AND separately (via a different polynomial) "backshare" among themselves.
@@ -51,27 +54,44 @@ pub struct BsDkg<C: Pairing> {
     pub next: Committee<C>,
 }
 
-impl<C: Pairing> BsDkg<C>
-where
-    <C::G2 as CurveGroup>::Config: WBConfig,
-    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
-{
-    pub fn init(curr: Committee<C>, next: Committee<C>) -> Self {
+impl<C: PairingWithG2Map> BsDkg<C> {
+    pub fn start(next: Committee<C>) -> Self {
         Self {
+            session_id: 0,
+            curr: next.clone(),
+            next,
+        }
+    }
+
+    pub fn init(session_id: u64, curr: Committee<C>, next: Committee<C>) -> Self {
+        Self {
+            session_id,
             curr,
             next,
         }
     }
 
-    fn next(self, next: Committee<C>) -> Self {
+    pub fn next(self, next: Committee<C>) -> Self {
         Self {
+            session_id: self.session_id + 1,
             curr: self.next,
             next,
         }
     }
 
-    fn h2() -> C::G2Affine {
-        C::G2Affine::generator() // TODO
+    /// Predictable `h2` corresponding to the given round of the protocol.
+    fn h2_of(session_id: u64) -> C::G2Affine {
+        C::hash_to_g2(&session_id.to_be_bytes()).unwrap()
+    }
+
+    /// Predictable `h2` corresponding to the current round of the protocol.
+    fn h2_curr(&self) -> C::G2Affine {
+        Self::h2_of(self.session_id - 1)
+    }
+
+    /// Predictable `h2` corresponding to the next round of the protocol.
+    fn h2_next(&self) -> C::G2Affine {
+        Self::h2_of(self.session_id)
     }
 
     /// The same secret `ssk = f(0).g1` is
@@ -96,7 +116,7 @@ where
             receipts: vec![(bs_receipt, 1)],
         };
 
-        Ok(BsTranscript { back_sharing, next_sharing })
+        Ok(BsTranscript { session_id: self.session_id, back_sharing, next_sharing })
     }
 
     pub fn deal_first<R: Rng>(&self, dealer: BlsSigner<C>, rng: &mut R) -> Result<Transcript<C>, ()> {
@@ -106,9 +126,11 @@ where
     // TODO: this is a stub
     pub fn verify<R: Rng>(&self, bs_transcript: BsTranscript<C>, rng: &mut R) -> VerifiedSharingAndBack<C> {
         let BsTranscript {
+            session_id,
             back_sharing,
             next_sharing,
         } = bs_transcript;
+        assert_eq!(session_id, self.session_id);
         let back_sharing = VerifiedSharing {
             secret_sharing: back_sharing.agg_ss.payload,
             params: self.curr.params.clone(),
@@ -116,7 +138,7 @@ where
         let back_sharing = VerifiedSharingWithG1Keys {
             verified_sharing: back_sharing,
             signers_g1: self.curr.signers_g1.clone(),
-            h2_pred: C::G2Affine::rand(rng),
+            h2_pred: self.h2_curr(),
         };
         let next_sharing = VerifiedSharing {
             secret_sharing: next_sharing.agg_ss.payload,
@@ -124,8 +146,8 @@ where
         };
         let next_sharing = VerifiedSharingWithG1Keys {
             verified_sharing: next_sharing,
-            signers_g1: self.curr.signers_g1.clone(),
-            h2_pred: C::G2Affine::rand(rng),
+            signers_g1: self.next.signers_g1.clone(),
+            h2_pred: self.h2_next(),
         };
         VerifiedSharingAndBack {
             back_sharing,
@@ -142,7 +164,7 @@ where
         VerifiedSharingWithG1Keys {
             verified_sharing,
             signers_g1: self.curr.signers_g1.clone(),
-            h2_pred: C::G2Affine::rand(rng), // TODO: make predictable
+            h2_pred: self.h2_next(),
         }
     }
 }
