@@ -6,7 +6,7 @@ use crate::sig_agg::SignatureAggregator;
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::CurveGroup;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 

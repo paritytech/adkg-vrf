@@ -6,6 +6,7 @@ use crate::bs_dkg::sig_agg::EcSigAgg;
 use crate::dkg::transcript::Transcript;
 use crate::dkg::{deal_and_sign, deal_and_sign_ssk};
 use crate::hash_to_curve::PairingWithG2Map;
+use crate::pvss::SecretSharing;
 use crate::utils::BarycentricDomain;
 use crate::{pvss, VerifiedSharing};
 use ark_ec::pairing::Pairing;
@@ -14,8 +15,6 @@ use ark_ec::VariableBaseMSM;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 use ark_std::Zero;
-
-
 // TODO:
 // 1. signers' pks in g1
 // 2. signer's produce tweaks
@@ -117,7 +116,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
     pub fn deal<R: Rng>(&self, dealer: BlsSigner<C>, rng: &mut R) -> Result<BsTranscript<C>, ()> {
         let ssk = C::ScalarField::rand(rng);
         let next_sharing = deal_and_sign_ssk(ssk, &self.next.params, rng, dealer.as_tuple()).unwrap();
-        let back_sharing =  deal_and_sign_ssk(ssk, &self.curr.params, rng, dealer.as_tuple()).unwrap();
+        let back_sharing = deal_and_sign_ssk(ssk, &self.curr.params, rng, dealer.as_tuple()).unwrap();
         Ok(BsTranscript { session_id: self.session_id, back_sharing, next_sharing })
     }
 
@@ -133,26 +132,33 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             next_sharing,
         } = bs_transcript;
         assert_eq!(session_id, self.session_id);
-        let back_sharing = VerifiedSharing {
-            secret_sharing: back_sharing.agg_ss.payload,
+        let _back_sharing = VerifiedSharing {
+            secret_sharing: back_sharing.agg_ss.payload.clone(),
             params: self.curr.params.clone(),
         };
         let back_sharing = VerifiedSharingWithG1Keys {
             sid: session_id,
-            verified_sharing: back_sharing,
+            verified_sharing: _back_sharing,
+            config: self.curr.params.config.clone(),
+            ss: back_sharing.agg_ss.payload,
             signers_g1: self.curr.signers_g1.clone(),
+            signers_g2: self.curr.params.signer_pks.clone(),
             h2_pred: self.h2_curr(),
         };
-        let next_sharing = VerifiedSharing {
-            secret_sharing: next_sharing.agg_ss.payload,
+        let _next_sharing = VerifiedSharing {
+            secret_sharing: next_sharing.agg_ss.payload.clone(),
             params: self.next.params.clone(),
         };
         let next_sharing = VerifiedSharingWithG1Keys {
             sid: session_id,
-            verified_sharing: next_sharing,
+            config: self.next.params.config.clone(),
+            ss: next_sharing.agg_ss.payload,
+            verified_sharing: _next_sharing,
             signers_g1: self.next.signers_g1.clone(),
+            signers_g2: self.next.params.signer_pks.clone(),
             h2_pred: self.h2_next(),
         };
+
         VerifiedSharingAndBack {
             back_sharing,
             next_sharing,
@@ -162,13 +168,16 @@ impl<C: PairingWithG2Map> BsDkg<C> {
     // TODO: this is a stub
     pub fn verify_first<R: Rng>(&self, s_transcript: Transcript<C>, rng: &mut R) -> VerifiedSharingWithG1Keys<C> {
         let verified_sharing = VerifiedSharing {
-            secret_sharing: s_transcript.agg_ss.payload,
+            secret_sharing: s_transcript.agg_ss.payload.clone(),
             params: self.curr.params.clone(),
         };
         VerifiedSharingWithG1Keys {
             sid: self.session_id,
             verified_sharing,
+            config: self.curr.params.config.clone(),
+            ss: s_transcript.agg_ss.payload,
             signers_g1: self.curr.signers_g1.clone(),
+            signers_g2: self.curr.params.signer_pks.clone(),
             h2_pred: self.h2_next(),
         }
     }
@@ -178,7 +187,10 @@ impl<C: PairingWithG2Map> BsDkg<C> {
 pub struct VerifiedSharingWithG1Keys<C: Pairing> {
     sid: u64,
     verified_sharing: VerifiedSharing<C>,
+    config: pvss::Config<C>,
+    ss: SecretSharing<C>,
     signers_g1: Vec<C::G1Affine>,
+    signers_g2: Vec<C::G2Affine>,
     h2_pred: C::G2Affine,
 }
 

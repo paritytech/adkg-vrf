@@ -1,7 +1,7 @@
 use crate::bs_dkg::BsDkg;
 use crate::hash_to_curve::CurveWithPairingAndHash;
+use crate::pvss;
 use crate::utils::BarycentricDomain;
-use crate::{pvss, PairingWithG1Map};
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::Zero;
