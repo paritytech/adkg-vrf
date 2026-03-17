@@ -1,15 +1,10 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use crate::bls::threshold::ThresholdVk;
-use crate::bs_dkg::sig_agg::EcSigAgg;
 use crate::dkg::aggregator::TranscriptAggregator;
 use crate::pvss::SecretSharing;
 use crate::sig_agg::SignatureAggregator;
-use crate::utils::BarycentricDomain;
 use ark_ec::pairing::Pairing;
-use ark_ec::CurveGroup;
-use ark_ec::VariableBaseMSM;
-use ark_std::Zero;
 use dkg::transcript;
 
 pub mod bls;
@@ -45,7 +40,6 @@ mod bs_dkg;
 mod hash_to_curve;
 pub use hash_to_curve::PairingWithG1Map;
 
-
 /// Verified aggregated secret shared to a list of signers with a specified threshold.
 /// Has all the data required to aggregate or verify threshold signatures for a single committee.
 /// Contains signers' BLS public keys only in G2,
@@ -58,47 +52,7 @@ pub struct VerifiedSharing<C: Pairing> {
     params: pvss::Params<C>,
 }
 
-#[derive(Clone, Debug)]
-pub struct VerifiedSharingWithG1Keys<C: Pairing> {
-    verified_sharing: VerifiedSharing<C>,
-    signers_g1: Vec<C::G1Affine>,
-    h2_pred: C::G2Affine,
-}
-
-impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
-
-    pub fn tweak_msg(&self) -> C::G2 {
-        self.h2_pred - self.verified_sharing.secret_sharing.h2
-    }
-
-    pub fn tweak_bgpks(&self, sigs: &[(C::G2Affine, C::G2Affine)]) -> Vec<Option<C::G2Affine>> {
-        let tweak_msg = self.tweak_msg().into_affine();
-        let tweaked_bgpks = self.verified_sharing.aggregation_key().aggregate_tweaks(tweak_msg, sigs);
-        tweaked_bgpks
-    }
-
-    pub fn tweak(self, sigs: &[(C::G2Affine, C::G2Affine)]) -> TweakedSharing<C> {
-        // TODO: verify
-        let tweaked_bgpks = self.tweak_bgpks(sigs);
-        TweakedSharing {
-            secret_sharing: self.verified_sharing,
-            signers_g1: self.signers_g1,
-            tweaked_bgpks,
-            h2_pred: self.h2_pred,
-        }
-    }
-}
-
-/// Verified aggregated (related) secrets shared to `2` consequent committees of signers.
-#[derive(Clone, Debug)]
-pub struct VerifiedSharingAndBack<C: Pairing> {
-    back_sharing: VerifiedSharingWithG1Keys<C>,
-    next_sharing: VerifiedSharingWithG1Keys<C>,
-}
-
-
 impl<C: Pairing> VerifiedSharing<C> {
-
     pub fn config(&self) -> pvss::Config<C> {
         self.params.config.clone()
     }
@@ -122,38 +76,6 @@ impl<C: Pairing> VerifiedSharing<C> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct TweakedSharing<C: Pairing> {
-    /// Secret shared to signers with keys in G2.
-    secret_sharing: VerifiedSharing<C>,
-    /// Signers' keys in G1 in the same order as `self.secret_sharing.params.signer_pks`
-    signers_g1: Vec<C::G1Affine>,
-    tweaked_bgpks: Vec<Option<C::G2Affine>>,
-    h2_pred: C::G2Affine,
-}
-
-impl<C: Pairing> TweakedSharing<C> {
-    /// Computes the threshold public key delta. This is (f0(0) - f1_back(0)).g1
-    /// `deg(f0) = deg(f1_back) = t0 - 1`.
-    /// Thus both the current sharing and the back-shared one should have `t0` tweaked bgpks at the same positions.
-    /// TODO: check for that
-    pub fn compute_delta(&self, bs_next: &Self) -> C::G2Affine {
-        let bgpk_deltas: Vec<C::G2> = self.tweaked_bgpks.iter()
-            .zip(bs_next.tweaked_bgpks.iter())
-            .map(|(curr, bs_next)| bs_next.unwrap() - curr.unwrap())
-            .collect();
-        let bgpk_deltas = C::G2::normalize_batch(&bgpk_deltas);
-        let bs_next_config = &bs_next.secret_sharing.params.config;
-        let lis_at_zero = BarycentricDomain::of_size(bs_next_config.domain, bs_next_config.n)
-            .lagrange_basis_at(C::ScalarField::zero());
-        C::G2::msm(&bgpk_deltas, &lis_at_zero).unwrap()
-            .into_affine()
-    }
-
-    pub fn into_signature_aggregator(self) -> EcSigAgg<C> {
-        EcSigAgg::new(self.secret_sharing.params.signer_pks, self.signers_g1, self.tweaked_bgpks, self.secret_sharing.params.config)
-    }
-}
 
 pub type BlsDkg = dkg::Dkg<ark_bls12_381::Bls12_381>;
 pub type BlsSignerPk = ark_bls12_381::G2Affine;
@@ -189,8 +111,6 @@ mod tests {
     use crate::dkg::Dkg;
     use crate::pvss;
 
-    use crate::bs_dkg::crypto::{EcAggThresholdSig, EvolvingCommitteeTpk};
-    use crate::bs_dkg::{BsDkg, Committee};
     use crate::sig_agg::SignatureAggregator;
     use ark_bls12_381::{Bls12_381, G1Affine};
     use ark_ec::pairing::Pairing;
@@ -212,100 +132,6 @@ mod tests {
         let sig_aggregator =
             SignatureAggregator::<C>::new(signers_pks.as_slice(), bgpk, pvss.config);
         (tvk, sig_aggregator)
-    }
-
-    // TODO:
-    // 1. signers' pks in g1
-    // 2. signer's produce tweaks
-    // 3. tweaks are verified, aggregated and applied
-    // 4. new key material type
-    // 5. new signature type
-    // 6. aggregation for that
-    // basically 2 cryptosuites, ideally with a fall-back option
-```
-    fn committee<C: Pairing>(signers: &[BlsSigner<C>], t: usize) -> Committee<C> {
-        let pks_g1: Vec<_> = signers.iter().map(|s| s.bls_pk_g1).collect();
-        let pks_g2: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
-        Committee {
-            params: pvss::Params::<C>::new(pks_g2, t).unwrap(),
-            signers_g1: pks_g1,
-        }
-    }
-
-    #[test]
-    fn test_back_sharing() {
-        let rng = &mut test_rng();
-
-        // Protocol and the participants
-        let (n, t) = (7, 5);
-
-        let signers_0: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
-        let signers_1: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
-        let committee_0 = committee(&signers_0, t);
-        let committee_1 = committee(&signers_1, t);
-        let dealer = signers_0[0].clone();
-
-        let bs_dkg = BsDkg::start(committee_0);
-
-        // Deals secret shares to the epoch #1 committee (no-one to backshare to)
-        let transcript = bs_dkg.deal_first(dealer.clone(), rng).unwrap();
-        let ss_0 = bs_dkg.verify_first(transcript, rng);
-        let h2_pred_0 = ss_0.h2_pred;
-        let (fc_tpk_0, fc_sig_agg_0) = ss_0.verified_sharing.clone().into_keys();
-        let ec_tpk = EvolvingCommitteeTpk::with_c(fc_tpk_0.c);
-
-        // Tests a threshold signature at epoch 0
-        let msg = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
-        let sigs: Vec<_> = signers_0.iter().map(|s| s.sign_g1(msg)).collect();
-        let fc_asig_0 = fc_sig_agg_0.aggregate_wo_checking(sigs.clone());
-        fc_tpk_0.verify_unoptimized(&fc_asig_0, msg);
-
-        // Tweaks the key material (`bgpks` and `h2`)
-        let tweak_msg_0 = ss_0.tweak_msg();
-        let tweaks_0: Vec<_> = signers_0.iter()
-            .map(|s| (s.sign_g2(tweak_msg_0), s.bls_pk_g2))
-            .collect();
-        let ss_tweaked_0 = ss_0.tweak(&tweaks_0);
-
-        let ec_sig_agg_0 = ss_tweaked_0.clone().into_signature_aggregator();
-        let ec_asig_0 = ec_sig_agg_0.aggregate(sigs);
-        ec_tpk.verify_sig(&ec_asig_0, msg.into_affine(), h2_pred_0);
-
-        let bs_dkg = bs_dkg.next(committee_1);
-        let bs_transcript = bs_dkg.deal(dealer, rng).unwrap();
-        let verified_bs = bs_dkg.verify(bs_transcript, rng);
-        let ss_1 = verified_bs.next_sharing;
-        let ss_1_back = verified_bs.back_sharing;
-        let fc_tpk_1 = ThresholdVk::from_share(&ss_1.verified_sharing.secret_sharing);
-        let ec_tpk_1 =  EvolvingCommitteeTpk::with_c(fc_tpk_1.c);
-        let h2_pred_1 = ss_1.h2_pred;
-
-        // TWEAKS
-        let tweak_msg_1 = ss_1.tweak_msg();
-        let tweaks_1: Vec<_> = signers_1.iter()
-            .map(|s| (s.sign_g2(tweak_msg_1), s.bls_pk_g2))
-            .collect();
-        let tweak_msg_back_1 = ss_1_back.tweak_msg();
-        let tweaks_back_1: Vec<_> = signers_0.iter()
-            .map(|s| (s.sign_g2(tweak_msg_back_1), s.bls_pk_g2))
-            .collect();
-
-        let ss_tweaked_1 = ss_1.tweak(&tweaks_1);
-        let ss_back_tweaked_1 = ss_1_back.tweak(&tweaks_back_1);
-        let bgpk_delta = ss_tweaked_0.compute_delta(&ss_back_tweaked_1);
-
-        let sigs: Vec<_> = signers_1.iter().map(|s| s.sign_g1(msg)).collect();
-        let ec_sig_agg_1 = ss_tweaked_1.into_signature_aggregator();
-        let ec_asig_1 = ec_sig_agg_1.aggregate(sigs);
-        ec_tpk_1.verify_sig(&ec_asig_1, msg.into_affine(), h2_pred_1);
-
-        let ec_asig_1_minus_delta = EcAggThresholdSig {
-            asig: ec_asig_1.asig,
-            apk_g1: ec_asig_1.apk_g1,
-            apk_g2: ec_asig_1.apk_g2,
-            abgpk_tweaked: (ec_asig_1.abgpk_tweaked - bgpk_delta).into_affine(),
-        };
-        ec_tpk.verify_sig(&ec_asig_1_minus_delta, msg.into_affine(), h2_pred_1);
     }
 
     #[test]
