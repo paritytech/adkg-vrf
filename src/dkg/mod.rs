@@ -35,6 +35,17 @@ pub fn deal_and_sign<C: PairingWithG2Map, R: Rng>(
 ) -> Result<Transcript<C>, ()>
 {
     let ssk = C::ScalarField::rand(rng);
+    deal_and_sign_ssk(ssk, pvss, rng, dealer)
+}
+
+/// A dealer not interested in further participation in the protocol (aggregating transcripts) can call this.
+pub(crate) fn deal_and_sign_ssk<C: PairingWithG2Map, R: Rng>(
+    ssk: C::ScalarField,
+    pvss: &pvss::Params<C>,
+    rng: &mut R,
+    dealer: (C::ScalarField, C::G1Affine),
+) -> Result<Transcript<C>, ()>
+{
     let sh = C::ScalarField::rand(rng);
     let ss = pvss.deal_secrets(ssk, sh, rng)?;
     let receipt = ContributionReceipt::<C>::sign((ssk, ss.payload.c), (sh, ss.payload.h1), dealer);
@@ -168,8 +179,8 @@ mod tests {
 
         let dkg =
             Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
-        let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1()).unwrap();
-        let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1()).unwrap();
+        let ss1 = dkg.deal_and_sign(rng, dealers[0].as_tuple()).unwrap();
+        let ss2 = dkg.deal_and_sign(rng, dealers[1].as_tuple()).unwrap();
         let agg_ss = BlsDkg::aggregate(vec![ss1.clone(), ss1, ss2]);
         assert_eq!(agg_ss.receipts.len(), 2);
         // assert_eq!(agg_ss.receipts[0].1, 2); //TODO

@@ -118,9 +118,9 @@ mod tests {
 
         let dkg =
             Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
-        let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1()).unwrap();
-        let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1()).unwrap();
-        let ss3 = dkg.deal_and_sign(rng, dealers[2].pk_in_g1()).unwrap();
+        let ss1 = dkg.deal_and_sign(rng, dealers[0].as_tuple()).unwrap();
+        let ss2 = dkg.deal_and_sign(rng, dealers[1].as_tuple()).unwrap();
+        let ss3 = dkg.deal_and_sign(rng, dealers[2].as_tuple()).unwrap();
 
         let agg = BlsTranscriptAggregator::new(dkg.clone(), dealer_pks);
 

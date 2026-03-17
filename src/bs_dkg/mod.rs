@@ -3,8 +3,8 @@ pub mod sig_agg;
 
 use crate::bls::vanilla::BlsSigner;
 use crate::bs_dkg::sig_agg::EcSigAgg;
-use crate::dkg::deal_and_sign;
-use crate::dkg::transcript::{ContributionReceipt, Transcript};
+use crate::dkg::transcript::Transcript;
+use crate::dkg::{deal_and_sign, deal_and_sign_ssk};
 use crate::hash_to_curve::PairingWithG2Map;
 use crate::utils::BarycentricDomain;
 use crate::{pvss, VerifiedSharing};
@@ -116,23 +116,8 @@ impl<C: PairingWithG2Map> BsDkg<C> {
     /// 2. back-shared to the current committee with THEIR threshold `self.curr.params.config.t`.
     pub fn deal<R: Rng>(&self, dealer: BlsSigner<C>, rng: &mut R) -> Result<BsTranscript<C>, ()> {
         let ssk = C::ScalarField::rand(rng);
-
-        let sh = C::ScalarField::rand(rng);
-        let ss = self.next.params.deal_secrets(ssk, sh, rng)?;
-        let receipt = ContributionReceipt::<C>::sign((ssk, ss.payload.c), (sh, ss.payload.h1), (dealer.sk, dealer.pk_g1));
-        let next_sharing = Transcript {
-            agg_ss: ss,
-            receipts: vec![(receipt, 1)],
-        };
-
-        let bs_sh = C::ScalarField::rand(rng);
-        let bs_ss = self.curr.params.deal_secrets(ssk, bs_sh, rng)?;
-        let bs_receipt = ContributionReceipt::<C>::sign((ssk, bs_ss.payload.c), (bs_sh, bs_ss.payload.h1), (dealer.sk, dealer.pk_g1));
-        let back_sharing = Transcript {
-            agg_ss: bs_ss,
-            receipts: vec![(bs_receipt, 1)],
-        };
-
+        let next_sharing = deal_and_sign_ssk(ssk, &self.next.params, rng, dealer.as_tuple()).unwrap();
+        let back_sharing =  deal_and_sign_ssk(ssk, &self.curr.params, rng, dealer.as_tuple()).unwrap();
         Ok(BsTranscript { session_id: self.session_id, back_sharing, next_sharing })
     }
 
@@ -296,7 +281,6 @@ mod tests {
         let bs_dkg = BsDkg::start(committee_0);
         let transcript = bs_dkg.deal_first(dealer.clone(), rng).unwrap();
         let ss_0 = bs_dkg.verify_first(transcript, rng);
-        let h2_pred_0 = ss_0.h2_pred;
         let ec_pk = EvolvingCommitteePk::with_c(ss_0.verified_sharing.secret_sharing.c);
 
         // Tweaks the key material (`bgpks` and `h2`)
@@ -315,9 +299,8 @@ mod tests {
         let bs_transcript = bs_dkg.deal(dealer, rng).unwrap();
         let verified_bs = bs_dkg.verify(bs_transcript, rng);
         let ss_1 = verified_bs.next_sharing;
+        let c1 = ss_1.verified_sharing.secret_sharing.c;
         let ss_1_back = verified_bs.back_sharing;
-        let ec_pk_1 = EvolvingCommitteePk::with_c(ss_1.verified_sharing.secret_sharing.c);
-        let h2_pred_1 = ss_1.h2_pred;
 
         // TWEAKS
         let tweak_msg_1 = ss_1.tweak_msg();
@@ -331,6 +314,7 @@ mod tests {
         let ss_tweaked_1 = ss_1.tweak(&tweaks_1);
         let ss_back_tweaked_1 = ss_1_back.tweak(&tweaks_back_1);
         let bgpk_delta = ss_tweaked_0.compute_delta(&ss_back_tweaked_1);
+        let ec_pk_1 = EvolvingCommitteePk::with_c(c1);
 
         let sig_agg_1 = ss_tweaked_1.into_signature_aggregator();
         let sigs_1: Vec<_> = signers_1[n - t..].iter().map(|s| s.sign_bytes_in_g1(b"msg1")).collect();

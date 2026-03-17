@@ -68,7 +68,7 @@ impl<C: Pairing> BlsSigner<C> {
         (sig, self.pk_g2)
     }
 
-    pub fn pk_in_g1(&self) -> (C::ScalarField, C::G1Affine) {
+    pub fn as_tuple(&self) -> (C::ScalarField, C::G1Affine) {
         (self.sk, self.pk_g1)
     }
 }
