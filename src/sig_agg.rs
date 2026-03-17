@@ -11,6 +11,18 @@ use crate::pvss;
 use crate::utils::BarycentricDomain;
 use ark_ec::CurveGroup;
 
+pub fn prepare<T, C: Pairing>(points: Vec<Option<T>>, config: &pvss::Config<C>) -> (Vec<C::ScalarField>, Vec<T>) {
+    assert_eq!(points.len(), config.n);
+    let mut bitmask: Vec<bool> = points.iter().map(|o| o.is_some()).collect();
+    bitmask.resize(config.domain.size(), false);
+    let set_bits_count = bitmask.iter().filter(|b| **b).count();
+    assert!(set_bits_count >= config.t);
+    let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
+        .lagrange_basis_at(C::ScalarField::zero());
+    let points = points.into_iter().flatten().collect();
+    (lis, points)
+}
+
 
 /// To aggregate vanilla BLS signatures, they have to be:
 /// 1. equipped with the signers' `bgpk`s
@@ -23,15 +35,7 @@ pub fn aggregate_augmented_sigs<C: Pairing>(
     augmented_sigs: Vec<Option<AggThresholdSig<C>>>,
     config: &pvss::Config<C>,
 ) -> AggThresholdSig<C> {
-    assert_eq!(augmented_sigs.len(), config.n);
-    let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
-    bitmask.resize(config.domain.size(), false);
-    let set_bits_count = bitmask.iter().filter(|b| **b).count();
-    assert!(set_bits_count >= config.t);
-    let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
-        .lagrange_basis_at(C::ScalarField::zero());
-    let augmented_sigs: Vec<AggThresholdSig<C>> =
-        augmented_sigs.into_iter().flatten().collect();
+    let (lis, augmented_sigs) = prepare(augmented_sigs, config);
     let bls_sigs: Vec<_> = augmented_sigs
         .iter()
         .map(|s| s.bls_sig_with_pk.sig)

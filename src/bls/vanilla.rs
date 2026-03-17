@@ -35,6 +35,12 @@ pub struct BlsSig<C: Pairing> {
     pub pk: C::G2Affine,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlsSigInG2<C: Pairing> {
+    pub sig: C::G2Affine,
+    pub pk: C::G1Affine,
+}
+
 impl<C: Pairing> BlsSigner<C> {
     pub fn new<R: Rng>(rng: &mut R) -> Self {
         let sk = C::ScalarField::rand(rng);
@@ -62,10 +68,13 @@ impl<C: Pairing> BlsSigner<C> {
         }
     }
 
-    pub fn sign_g2_point(&self, m: C::G2) -> (C::G2Affine, C::G2Affine) {
+    pub fn sign_g2_point(&self, m: C::G2) -> BlsSigInG2<C> {
         let sig = m * self.sk;
         let sig = sig.into_affine();
-        (sig, self.pk_g2)
+        BlsSigInG2 {
+            sig,
+            pk: self.pk_g1,
+        }
     }
 
     pub fn as_tuple(&self) -> (C::ScalarField, C::G1Affine) {
