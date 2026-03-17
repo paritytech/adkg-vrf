@@ -119,7 +119,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
 
         let sh = C::ScalarField::rand(rng);
         let ss = self.next.params.deal_secrets(ssk, sh, rng)?;
-        let receipt = ContributionReceipt::<C>::sign((ssk, ss.payload.c), (sh, ss.payload.h1), (dealer.sk, dealer.bls_pk_g1));
+        let receipt = ContributionReceipt::<C>::sign((ssk, ss.payload.c), (sh, ss.payload.h1), (dealer.sk, dealer.pk_g1));
         let next_sharing = Transcript {
             agg_ss: ss,
             receipts: vec![(receipt, 1)],
@@ -127,7 +127,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
 
         let bs_sh = C::ScalarField::rand(rng);
         let bs_ss = self.curr.params.deal_secrets(ssk, bs_sh, rng)?;
-        let bs_receipt = ContributionReceipt::<C>::sign((ssk, bs_ss.payload.c), (bs_sh, bs_ss.payload.h1), (dealer.sk, dealer.bls_pk_g1));
+        let bs_receipt = ContributionReceipt::<C>::sign((ssk, bs_ss.payload.c), (bs_sh, bs_ss.payload.h1), (dealer.sk, dealer.pk_g1));
         let back_sharing = Transcript {
             agg_ss: bs_ss,
             receipts: vec![(bs_receipt, 1)],
@@ -137,7 +137,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
     }
 
     pub fn deal_first<R: Rng>(&self, dealer: BlsSigner<C>, rng: &mut R) -> Result<Transcript<C>, ()> {
-        deal_and_sign(&self.curr.params, rng, (dealer.sk, dealer.bls_pk_g1))
+        deal_and_sign(&self.curr.params, rng, (dealer.sk, dealer.pk_g1))
     }
 
     // TODO: this is a stub
@@ -260,16 +260,12 @@ impl<C: Pairing> TweakedSharing<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bls::threshold::ThresholdVk;
     use crate::bs_dkg::crypto::{EvolvingCommitteeAggSig, EvolvingCommitteePk, EvolvingCommitteeSig};
     use ark_bls12_381::Bls12_381;
-    use ark_ec::AffineRepr;
     use ark_std::test_rng;
 
-
     fn committee<C: Pairing>(signers: &[BlsSigner<C>], t: usize) -> Committee<C> {
-        let pks_g1: Vec<_> = signers.iter().map(|s| s.bls_pk_g1).collect();
-        let pks_g2: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
+        let (pks_g1, pks_g2): (Vec<_>, Vec<_>) = signers.iter().map(|s| (s.pk_g1, s.pk_g2)).unzip();
         Committee {
             params: pvss::Params::<C>::new(pks_g2, t).unwrap(),
             signers_g1: pks_g1,
@@ -291,64 +287,61 @@ mod tests {
 
         let bs_dkg = BsDkg::start(committee_0);
 
-        // Deals secret shares to the epoch #1 committee (no-one to backshare to)
+        // Deals secret shares to the epoch #0 committee (noone to backshare to)
         let transcript = bs_dkg.deal_first(dealer.clone(), rng).unwrap();
         let ss_0 = bs_dkg.verify_first(transcript, rng);
         let h2_pred_0 = ss_0.h2_pred;
-        let (fc_tpk_0, fc_sig_agg_0) = ss_0.verified_sharing.clone().into_keys();
-        let ec_tpk = EvolvingCommitteePk::with_c(fc_tpk_0.c);
+        let ec_pk = EvolvingCommitteePk::with_c(ss_0.verified_sharing.secret_sharing.c);
 
         // Tests a threshold signature at epoch 0
-        let msg = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
-        let sigs: Vec<_> = signers_0[..t].iter().map(|s| s.sign_g1(msg)).collect();
-        let fc_asig_0 = fc_sig_agg_0.aggregate_wo_checking(sigs.clone());
-        fc_tpk_0.verify_unoptimized(&fc_asig_0, msg);
+
 
         // Tweaks the key material (`bgpks` and `h2`)
         let tweak_msg_0 = ss_0.tweak_msg();
         let tweaks_0: Vec<_> = signers_0.iter()
-            .map(|s| (s.sign_g2(tweak_msg_0), s.bls_pk_g2))
+            .map(|s| (s.sign_g2(tweak_msg_0), s.pk_g2))
             .collect();
         let ss_tweaked_0 = ss_0.tweak(&tweaks_0);
 
-        let ec_sig_agg_0 = ss_tweaked_0.clone().into_signature_aggregator();
-        let ec_asig_0 = ec_sig_agg_0.aggregate(sigs);
-        ec_tpk.verify_sig(&ec_asig_0, msg.into_affine(), h2_pred_0);
 
+        let sig_agg_0 = ss_tweaked_0.clone().into_signature_aggregator();
+        let sigs_0: Vec<_> = signers_0[..t].iter().map(|s| s.sign_bytes_in_g1(b"msg0")).collect();
+        let asig_0 = sig_agg_0.aggregate(sigs_0);
+        ec_pk.verify(&asig_0, b"msg0", h2_pred_0);
+
+        // EPOCH #1
         let bs_dkg = bs_dkg.next(committee_1);
         let bs_transcript = bs_dkg.deal(dealer, rng).unwrap();
         let verified_bs = bs_dkg.verify(bs_transcript, rng);
         let ss_1 = verified_bs.next_sharing;
         let ss_1_back = verified_bs.back_sharing;
-        let fc_tpk_1 = ThresholdVk::from_share(&ss_1.verified_sharing.secret_sharing);
-        let ec_tpk_1 = EvolvingCommitteePk::with_c(fc_tpk_1.c);
+        let ec_pk_1 = EvolvingCommitteePk::with_c(ss_1.verified_sharing.secret_sharing.c);
         let h2_pred_1 = ss_1.h2_pred;
 
         // TWEAKS
         let tweak_msg_1 = ss_1.tweak_msg();
         let tweaks_1: Vec<_> = signers_1.iter()
-            .map(|s| (s.sign_g2(tweak_msg_1), s.bls_pk_g2))
+            .map(|s| (s.sign_g2(tweak_msg_1), s.pk_g2))
             .collect();
         let tweak_msg_back_1 = ss_1_back.tweak_msg();
         let tweaks_back_1: Vec<_> = signers_0.iter()
-            .map(|s| (s.sign_g2(tweak_msg_back_1), s.bls_pk_g2))
+            .map(|s| (s.sign_g2(tweak_msg_back_1), s.pk_g2))
             .collect();
-
         let ss_tweaked_1 = ss_1.tweak(&tweaks_1);
         let ss_back_tweaked_1 = ss_1_back.tweak(&tweaks_back_1);
         let bgpk_delta = ss_tweaked_0.compute_delta(&ss_back_tweaked_1);
 
-        let sigs: Vec<_> = signers_1[n-t..].iter().map(|s| s.sign_g1(msg)).collect();
-        let ec_sig_agg_1 = ss_tweaked_1.into_signature_aggregator();
-        let ec_asig_1 = ec_sig_agg_1.aggregate(sigs);
-        ec_tpk_1.verify_sig(&ec_asig_1, msg.into_affine(), h2_pred_1);
+        let sig_agg_1 = ss_tweaked_1.into_signature_aggregator();
+        let sigs_1: Vec<_> = signers_1[n - t..].iter().map(|s| s.sign_bytes_in_g1(b"msg1")).collect();
+        let asig_1 = sig_agg_1.aggregate(sigs_1);
+        ec_pk_1.verify(&asig_1, b"msg1", h2_pred_1);
 
         let ec_asig_1 = EvolvingCommitteeAggSig(EvolvingCommitteeSig {
-            sig: ec_asig_1.0.sig,
-            pk_g1: ec_asig_1.0.pk_g1,
-            pk_g2: ec_asig_1.0.pk_g2,
-            bgpk: (ec_asig_1.0.bgpk - bgpk_delta).into_affine(),
+            sig: asig_1.0.sig,
+            pk_g1: asig_1.0.pk_g1,
+            pk_g2: asig_1.0.pk_g2,
+            bgpk: (asig_1.0.bgpk - bgpk_delta).into_affine(),
         });
-        ec_tpk.verify_sig(&ec_asig_1, msg.into_affine(), h2_pred_1);
+        ec_pk.verify(&ec_asig_1, b"msg1", h2_pred_1);
     }
 }

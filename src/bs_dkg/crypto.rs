@@ -1,5 +1,5 @@
-use crate::pvss;
 use crate::utils::BarycentricDomain;
+use crate::{pvss, PairingWithG1Map};
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::Zero;
@@ -21,7 +21,7 @@ pub(crate) struct EvolvingCommitteeSig<C: Pairing> {
 
 pub struct EvolvingCommitteeAggSig<C: Pairing>(pub(crate) EvolvingCommitteeSig<C>);
 
-impl<C: Pairing> EvolvingCommitteePk<C> {
+impl<C: PairingWithG1Map> EvolvingCommitteePk<C> {
     pub fn with_c(c: C::G1Affine) -> Self {
         Self {
             c,
@@ -30,7 +30,12 @@ impl<C: Pairing> EvolvingCommitteePk<C> {
         }
     }
 
-    pub fn verify_sig(&self, sig: &EvolvingCommitteeAggSig<C>, msg: C::G1Affine, h2_pred: C::G2Affine) {
+    pub fn verify(&self, sig: &EvolvingCommitteeAggSig<C>, msg: &[u8], h2_pred: C::G2Affine) {
+        let msg_in_g1 = C::hash_to_g1(msg).unwrap();
+        self.verify_point(sig, msg_in_g1, h2_pred)
+    }
+
+    pub fn verify_point(&self, sig: &EvolvingCommitteeAggSig<C>, msg: C::G1Affine, h2_pred: C::G2Affine) {
         // BLS aggregate public keys consistency across `G1` and `G2`.
         // `apk_g1 = ask.g1` and `apk_g2 = ask.g2` for some `ask`.
         // `e(g1, apk_g2) = e(apk_g1, g2)`

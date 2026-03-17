@@ -114,7 +114,6 @@ mod tests {
     use crate::sig_agg::SignatureAggregator;
     use ark_bls12_381::{Bls12_381, G1Affine};
     use ark_ec::pairing::Pairing;
-    use ark_ec::{AffineRepr, CurveGroup};
     use ark_std::rand::Rng;
     use ark_std::test_rng;
     use ark_std::vec::Vec;
@@ -140,10 +139,10 @@ mod tests {
 
         let (n, t) = (7, 5);
         let signers: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
-        let signers_pks: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
+        let signers_pks: Vec<_> = signers.iter().map(|s| s.pk_g2).collect();
 
         let dealers: Vec<_> = (0..3).map(|_| BlsSigner::<Bls12_381>::new(rng)).collect();
-        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.bls_pk_g1).collect();
+        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.pk_g1).collect();
 
         let dkg =
             Dkg::<Bls12_381>::new(signers_pks.clone(), t, dealer_pks.clone(), dealer_pks.len())
@@ -152,7 +151,7 @@ mod tests {
         let transcripts: Vec<Transcript<Bls12_381>> = dealers
             .into_iter()
             .map(|dealer| {
-                dkg.deal_and_sign(rng, (dealer.sk, dealer.bls_pk_g1))
+                dkg.deal_and_sign(rng, (dealer.sk, dealer.pk_g1))
                     .unwrap()
             })
             .collect();
@@ -170,16 +169,16 @@ mod tests {
         let sig_aggregator =
             SignatureAggregator::<Bls12_381>::new(&signers_pks, keys.secret_sharing.bgpk, config);
 
-        let message = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
-        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(message)).collect();
+        let message = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes());
+        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1_point(message)).collect();
 
         let threshold_sig_n =
-            sig_aggregator.check_then_aggregate(message.into_affine(), sigs.clone());
+            sig_aggregator.check_then_aggregate(message, sigs.clone());
         let vuf_n = threshold_vk.vuf_unoptimized(&threshold_sig_n, message);
 
         let sigs_t: Vec<_> = sigs.into_iter().take(t).collect();
         let threshold_sig_t =
-            sig_aggregator.check_then_aggregate(message.into_affine(), sigs_t.clone());
+            sig_aggregator.check_then_aggregate(message, sigs_t.clone());
         let vuf_t = threshold_vk.vuf_unoptimized(&threshold_sig_t, message);
 
         assert_eq!(vuf_n, vuf_t);

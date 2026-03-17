@@ -6,7 +6,7 @@ use ark_std::{vec, vec::Vec};
 use hashbrown::HashMap;
 
 use crate::bls::threshold::AggThresholdSig;
-use crate::bls::vanilla::StandaloneSig;
+use crate::bls::vanilla::BlsSig;
 use crate::pvss;
 use crate::utils::BarycentricDomain;
 use ark_ec::CurveGroup;
@@ -45,7 +45,7 @@ pub fn aggregate_augmented_sigs<C: Pairing>(
     let apk = C::G2::msm(&bls_pks, &lis).unwrap().into_affine();
     let abgpk = C::G2::msm(&bgpks, &lis).unwrap().into_affine();
     AggThresholdSig {
-        bls_sig_with_pk: StandaloneSig { sig: asig, pk: apk },
+        bls_sig_with_pk: BlsSig { sig: asig, pk: apk },
         bgpk: abgpk,
     }
 }
@@ -82,7 +82,7 @@ impl<C: Pairing> SignatureAggregator<C> {
     }
 
     /// If the public key is recognized, returns the signer's index `j` and adds `bgpk_j` to the signature.
-    pub fn augment_sig(&self, sig: StandaloneSig<C>) -> Option<(usize, AggThresholdSig<C>)> {
+    pub fn augment_sig(&self, sig: BlsSig<C>) -> Option<(usize, AggThresholdSig<C>)> {
         self.pks_mapping.get(&sig.pk).map(|(bgpk, j)| (*j, AggThresholdSig {
             bls_sig_with_pk: sig,
             bgpk: *bgpk,
@@ -91,7 +91,7 @@ impl<C: Pairing> SignatureAggregator<C> {
 
     /// Aggregates signatures. Checks that there is a threshold of signers, but doesn't verify the individual signatures.
     /// If a public key is not recognized, the signature is dropped. Signatures from
-    pub fn aggregate_wo_checking(&self, sigs: Vec<StandaloneSig<C>>) -> AggThresholdSig<C> {
+    pub fn aggregate_wo_checking(&self, sigs: Vec<BlsSig<C>>) -> AggThresholdSig<C> {
         let mut augmented_sigs = vec![None; self.pks_mapping.len()];
         sigs.into_iter().for_each(|sig| {
             let (j, s) = self.augment_sig(sig).unwrap();
@@ -102,7 +102,7 @@ impl<C: Pairing> SignatureAggregator<C> {
 
     /// Checks that each signature verifies and comes from a legit signer.
     /// Checks that the threshold is met. TODO: Doesn't allow duplicate signatures?
-    pub fn check_then_aggregate(&self, message: C::G1Affine, sigs: Vec<StandaloneSig<C>>) -> AggThresholdSig<C> {
+    pub fn check_then_aggregate(&self, message: C::G1Affine, sigs: Vec<BlsSig<C>>) -> AggThresholdSig<C> {
         let mut session = self.start_session(message);
         session.append_verify_sigs(sigs.clone());
         let augmented_sigs = session.finalize();
@@ -152,7 +152,7 @@ impl<'a, C: Pairing> Session<'a, C> {
     /// 2. from a known pk
     /// duplicates allowed
     /// TODO: return result of indices
-    pub fn append_verify_sig(&mut self, sig: StandaloneSig<C>) {
+    pub fn append_verify_sig(&mut self, sig: BlsSig<C>) {
         let (bgpk, j) = {
             let x = self.pks.get(&sig.pk);
             assert!(x.is_some());
@@ -166,7 +166,7 @@ impl<'a, C: Pairing> Session<'a, C> {
         })
     }
 
-    pub fn append_verify_sigs(&mut self, sigs: Vec<StandaloneSig<C>>) {
+    pub fn append_verify_sigs(&mut self, sigs: Vec<BlsSig<C>>) {
         sigs.into_iter().for_each(|s| self.append_verify_sig(s));
     }
 }

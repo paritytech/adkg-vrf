@@ -1,7 +1,7 @@
 use ark_ec::pairing::{Pairing, PairingOutput};
-use ark_ec::PrimeGroup;
+use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
 
-use crate::bls::vanilla::StandaloneSig;
+use crate::bls::vanilla::BlsSig;
 use crate::pvss::SecretSharing;
 
 // Used to verify aggregated threshold signatures.
@@ -18,7 +18,7 @@ pub struct ThresholdVk<C: Pairing> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AggThresholdSig<C: Pairing> {
-    pub(crate) bls_sig_with_pk: StandaloneSig<C>,
+    pub(crate) bls_sig_with_pk: BlsSig<C>,
     pub(crate) bgpk: C::G2Affine,
 }
 
@@ -35,22 +35,22 @@ impl<C: Pairing> ThresholdVk<C> {
         }
     }
 
-    pub fn verify_unoptimized(&self, sig: &AggThresholdSig<C>, message: C::G1) {
-        sig.bls_sig_with_pk
-            .verify_unoptimized(message, self.g2.into());
+    pub fn verify_unoptimized(&self, sig: &AggThresholdSig<C>, msg: C::G1Affine) {
+        sig.bls_sig_with_pk.verify_unoptimized(msg, self.g2.into_affine());
         assert_eq!(
-            C::pairing(self.g1.into(), sig.bgpk),
+            C::pairing(self.g1.into_affine(), sig.bgpk),
             C::multi_pairing(
                 &[self.c, self.h1],
-                &[self.g2.into(), sig.bls_sig_with_pk.pk]
+                &[self.g2.into_affine(), sig.bls_sig_with_pk.pk]
             )
         );
     }
 
-    pub fn vuf_unoptimized(&self, sig: &AggThresholdSig<C>, message: C::G1) -> PairingOutput<C> {
-        self.verify_unoptimized(sig, message);
+    pub fn vuf_unoptimized(&self, sig: &AggThresholdSig<C>, msg: C::G1Affine) -> PairingOutput<C> {
+        self.verify_unoptimized(sig, msg);
+        let msg = msg.into_group(); // TODO: wtf
         C::multi_pairing(
-            &[(-message).into(), sig.bls_sig_with_pk.sig],
+            &[(-msg).into(), sig.bls_sig_with_pk.sig],
             &[sig.bgpk, self.h2],
         )
     }

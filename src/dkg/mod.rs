@@ -163,7 +163,7 @@ mod tests {
         let (n, t) = (10, 7);
 
         let dealers: Vec<_> = (0..3).map(|_| BlsSigner::<Bls12_381>::new(rng)).collect();
-        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.bls_pk_g1).collect();
+        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.pk_g1).collect();
         let signers_pks: Vec<_> = (0..n).map(|_| G2Affine::rand(rng)).collect();
 
         let dkg =

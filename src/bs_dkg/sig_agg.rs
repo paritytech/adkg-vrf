@@ -1,4 +1,4 @@
-use crate::bls::vanilla::StandaloneSig;
+use crate::bls::vanilla::BlsSig;
 use crate::bs_dkg::crypto::{aggregate_ec_sigs, EvolvingCommitteeAggSig, EvolvingCommitteeSig};
 use crate::pvss;
 use ark_ec::pairing::Pairing;
@@ -37,7 +37,7 @@ impl<C: Pairing> EcSigAgg<C> {
         }
     }
 
-    pub fn aggregate(&self, sigs: Vec<StandaloneSig<C>>) -> EvolvingCommitteeAggSig<C> {
+    pub fn aggregate(&self, sigs: Vec<BlsSig<C>>) -> EvolvingCommitteeAggSig<C> {
         let mut augmented_sigs = vec![None; self.config.n];
         sigs.into_iter().for_each(|sig| {
             if let Some((j, sig_ext)) = self.pk_ext.get(&sig.pk).map(|pk_ext| {

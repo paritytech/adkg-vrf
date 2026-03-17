@@ -1,7 +1,7 @@
 use crate::bls::enc;
 use crate::bls::ibe::EncPk;
 use crate::bls::threshold::ThresholdVk;
-use crate::bls::vanilla::{BlsSigner, StandaloneSig};
+use crate::bls::vanilla::{BlsSig, BlsSigner};
 use crate::sig_agg::SignatureAggregator;
 use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
 use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
@@ -28,7 +28,7 @@ where
         let cc = enc(pt, &ss);
         // identity to encrypt to
         let id = (cc.clone(), epk_bgpk, epk_sig);
-        let esk_bls_x_id = BlsSigner::<C>::with_sk(esk_bls).hash_and_sign(id); // TODO: computes pks
+        let esk_bls_x_id = BlsSigner::<C>::with_sk(esk_bls).sign_in_g1(id); // TODO: computes pks
         let epk_apk = -(self.h1 * esk_apk + esk_bls_x_id.sig);
         let epk = EncPk {
             epk_bgpk: epk_bgpk.into_affine(),
@@ -39,13 +39,13 @@ where
     }
 
     // Signs the id
-    pub fn partial_decrypt(&self, sk: C::ScalarField, cc: &[u8], epk: &EncPk<C>) -> StandaloneSig<C> {
+    pub fn partial_decrypt(&self, sk: C::ScalarField, cc: &[u8], epk: &EncPk<C>) -> BlsSig<C> {
         let id = (cc.clone(), epk.epk_bgpk, epk.epk_sig);
         let id_hash = BlsSigner::<C>::hash_to_g1(id);
-        BlsSigner::<C>::with_sk(sk).sign_g1(id_hash.into_group())
+        BlsSigner::<C>::with_sk(sk).sign_g1_point(id_hash)
     }
 
-    fn decrypt_from_partials(&self, sig_agg: SignatureAggregator<C>, cc: &[u8], epk: &EncPk<C>, partials: Vec<StandaloneSig<C>>) -> Vec<u8> {
+    fn decrypt_from_partials(&self, sig_agg: SignatureAggregator<C>, cc: &[u8], epk: &EncPk<C>, partials: Vec<BlsSig<C>>) -> Vec<u8> {
         let id = (cc, epk.epk_bgpk, epk.epk_sig);
         let id_hash = BlsSigner::<C>::hash_to_g1(id);
         // TODO
@@ -53,7 +53,7 @@ where
         // id.serialize_compressed(&mut buf[..]).unwrap();
         // assert!(self.check_epk(epk, &buf));
         let agg_sig = sig_agg.aggregate_wo_checking(partials);
-        self.verify_unoptimized(&agg_sig, id_hash.into_group());
+        self.verify_unoptimized(&agg_sig, id_hash);
         self.decrypt(&cc, &epk, &agg_sig)
     }
 }
@@ -70,7 +70,7 @@ mod tests {
 
         let (n, t) = (7, 5);
         let signers: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
-        let signers_pks: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
+        let signers_pks: Vec<_> = signers.iter().map(|s| s.pk_g2).collect();
         let (tvk, sig_aggregator) = crate::tests::simulate_pvss::<Bls12_381, _>(signers_pks, t, rng);
 
         let pt = crate::bls::tests::pt(rng);

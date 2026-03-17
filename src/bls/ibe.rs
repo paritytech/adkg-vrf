@@ -29,7 +29,7 @@ where
         // epk -- ephemeral public key
         let epk_bgpk = self.g1 * esk_apk;
         let epk_sig = self.g2 * esk_bls;
-        let esk_bls_x_id = BlsSigner::<C>::with_sk(esk_bls).hash_and_sign(id); // TODO: computes pks
+        let esk_bls_x_id = BlsSigner::<C>::with_sk(esk_bls).sign_in_g1(id); // TODO: computes pks
         let epk_apk = -(self.h1 * esk_apk + esk_bls_x_id.sig);
         let epk = EncPk {
             epk_bgpk: epk_bgpk.into_affine(),
@@ -74,7 +74,6 @@ impl<C: Pairing> EncPk<C> {
 mod tests {
     use crate::bls::vanilla::BlsSigner;
     use ark_bls12_381::Bls12_381;
-    use ark_ec::{AffineRepr, CurveGroup};
     use ark_std::test_rng;
 
     #[test]
@@ -83,22 +82,22 @@ mod tests {
 
         let (n, t) = (7, 5);
         let signers: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
-        let signers_pks: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
+        let signers_pks: Vec<_> = signers.iter().map(|s| s.pk_g2).collect();
         let (tvk, sig_aggregator) = crate::tests::simulate_pvss(signers_pks, t, rng);
 
         let (ss, epk) = tvk.initiate_key_exchange(b"id", rng);
         assert!(tvk.check_epk(&epk, b"id"));
         assert!(!tvk.check_epk(&epk, b"id2"));
 
-        let id_hash = BlsSigner::<Bls12_381>::hash_to_g1("id".as_bytes()).into_group();
-        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(id_hash)).collect();
-        let agg_sig =  sig_aggregator.check_then_aggregate(id_hash.into_affine(), sigs.clone());
+        let id_hash = BlsSigner::<Bls12_381>::hash_to_g1("id".as_bytes());
+        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1_point(id_hash)).collect();
+        let agg_sig =  sig_aggregator.check_then_aggregate(id_hash, sigs.clone());
         let ss_ = epk.complete_key_exchange(&agg_sig);
         assert_eq!(ss, ss_);
 
-        let id_hash = BlsSigner::<Bls12_381>::hash_to_g1("id2".as_bytes()).into_group();
-        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1(id_hash)).collect();
-        let agg_sig =  sig_aggregator.check_then_aggregate(id_hash.into_affine(), sigs.clone());
+        let id_hash = BlsSigner::<Bls12_381>::hash_to_g1("id2".as_bytes());
+        let sigs: Vec<_> = signers.iter().map(|s| s.sign_g1_point(id_hash)).collect();
+        let agg_sig =  sig_aggregator.check_then_aggregate(id_hash, sigs.clone());
         let ss_ = epk.complete_key_exchange(&agg_sig);
         assert_ne!(ss, ss_);
     }
