@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use crate::bls::threshold::ThresholdVk;
+use crate::bs_dkg::sig_agg::EcSigAgg;
 use crate::dkg::aggregator::TranscriptAggregator;
 use crate::pvss::SecretSharing;
 use crate::sig_agg::SignatureAggregator;
@@ -43,6 +44,7 @@ mod bs_dkg;
 
 mod hash_to_curve;
 pub use hash_to_curve::PairingWithG1Map;
+
 
 /// Verified aggregated secret shared to a list of signers with a specified threshold.
 /// Has all the data required to aggregate or verify threshold signatures for a single committee.
@@ -120,6 +122,7 @@ impl<C: Pairing> VerifiedSharing<C> {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct TweakedSharing<C: Pairing> {
     /// Secret shared to signers with keys in G2.
     secret_sharing: VerifiedSharing<C>,
@@ -145,6 +148,10 @@ impl<C: Pairing> TweakedSharing<C> {
             .lagrange_basis_at(C::ScalarField::zero());
         C::G2::msm(&bgpk_deltas, &lis_at_zero).unwrap()
             .into_affine()
+    }
+
+    pub fn into_signature_aggregator(self) -> EcSigAgg<C> {
+        EcSigAgg::new(self.secret_sharing.params.signer_pks, self.signers_g1, self.tweaked_bgpks, self.secret_sharing.params.config)
     }
 }
 
@@ -182,7 +189,7 @@ mod tests {
     use crate::dkg::Dkg;
     use crate::pvss;
 
-    use crate::bs_dkg::crypto::{aggregate_sigs, EcAggThresholdSig, EvolvingCommitteeTpk};
+    use crate::bs_dkg::crypto::{EcAggThresholdSig, EvolvingCommitteeTpk};
     use crate::bs_dkg::{BsDkg, Committee};
     use crate::sig_agg::SignatureAggregator;
     use ark_bls12_381::{Bls12_381, G1Affine};
@@ -226,34 +233,35 @@ mod tests {
         let signers_0: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
         let signers_pks_g2_0: Vec<_> = signers_0.iter().map(|s| s.bls_pk_g2).collect();
         let signers_pks_g1_0: Vec<_> = signers_0.iter().map(|s| s.bls_pk_g1).collect();
+        let dealer = signers_0[0].clone();
 
         let signers_1: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
         let signers_pks_g2_1: Vec<_> = signers_1.iter().map(|s| s.bls_pk_g2).collect();
         let signers_pks_g1_1: Vec<_> = signers_1.iter().map(|s| s.bls_pk_g1).collect();
 
-        let first = Committee {
+        let committee_0 = Committee {
             params: pvss::Params::<Bls12_381>::new(signers_pks_g2_0.clone(), t).unwrap(),
             signers_g1: signers_pks_g1_0.clone(),
         };
-        let next = Committee {
+        let committee_1 = Committee {
             params: pvss::Params::<Bls12_381>::new(signers_pks_g2_1.clone(), t).unwrap(),
             signers_g1: signers_pks_g1_1.clone(),
         };
-        let bs_dkg = BsDkg::start(first);
+        let bs_dkg = BsDkg::start(committee_0);
 
         // Deals secret shares to the epoch #1 committee (no-one to backshare to)
-        let transcript = bs_dkg.deal_first(signers_0[0].clone(), rng).unwrap();
+        let transcript = bs_dkg.deal_first(dealer, rng).unwrap();
         let ss_0 = bs_dkg.verify_first(transcript, rng);
         let config_0 = ss_0.verified_sharing.params.config.clone();
         let h2_pred_0 = ss_0.h2_pred;
-        let (fc_tpk_0, sig_aggregator_0) = ss_0.clone().verified_sharing.into_keys();
+        let (fc_tpk_0, fc_sig_aggregator_0) = ss_0.verified_sharing.clone().into_keys();
         let ec_tpk = EvolvingCommitteeTpk::with_c(fc_tpk_0.c);
 
         // Tests a threshold signature at epoch 0
         let msg = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
         let sigs: Vec<_> = signers_0.iter().map(|s| s.sign_g1(msg)).collect();
-        let agg_sig_0 = sig_aggregator_0.aggregate_wo_checking(sigs.clone());
-        fc_tpk_0.verify_unoptimized(&agg_sig_0, msg);
+        let fc_asig_0 = fc_sig_aggregator_0.aggregate_wo_checking(sigs.clone());
+        fc_tpk_0.verify_unoptimized(&fc_asig_0, msg);
 
         // Tweaks the key material (`bgpks` and `h2`)
         let tweak_msg_0 = ss_0.tweak_msg();
@@ -262,24 +270,17 @@ mod tests {
             .collect();
         let ss_tweaked_0 = ss_0.tweak(&tweaks_0);
 
-        // TODO: write the aggregator for the evolving committee scheme
-        let bgpk_mod_0: Vec<_> = ss_tweaked_0.tweaked_bgpks.iter().map(|x| x.unwrap()).collect();
-        let agg_sig_mod_0 = aggregate_sigs(
-            sigs,
-            signers_pks_g1_0,
-            bgpk_mod_0.clone(),
-            &config_0,
-        );
-
+        let ec_sig_agg_0 = ss_tweaked_0.clone().into_signature_aggregator();
+        let agg_sig_mod_0 = ec_sig_agg_0.aggregate(sigs);
         ec_tpk.verify_sig(&agg_sig_mod_0, msg.into_affine(), h2_pred_0);
 
-
-        let bs_dkg = bs_dkg.next(next);
+        let bs_dkg = bs_dkg.next(committee_1);
         let bs_transcript = bs_dkg.deal(signers_0[0].clone(), rng).unwrap();
         let verified_bs = bs_dkg.verify(bs_transcript, rng);
         let ss_1 = verified_bs.next_sharing;
-        let mut ss_1_back = verified_bs.back_sharing;
+        let ss_1_back = verified_bs.back_sharing;
         let fc_tpk_1 = ThresholdVk::from_share(&ss_1.verified_sharing.secret_sharing);
+        let ec_tpk_1 =  EvolvingCommitteeTpk::with_c(fc_tpk_1.c);
         let h2_pred_1 = ss_1.h2_pred;
 
         // TWEAKS
@@ -292,24 +293,22 @@ mod tests {
             .map(|s| (s.sign_g2(tweak_msg_back_1), s.bls_pk_g2))
             .collect();
 
-        let ss_mod_1 = ss_1.tweak(&tweaks_1);
-        let ss_back_mod_1 = ss_1_back.tweak(&tweaks_back_1);
-        let bgpk_delta = ss_tweaked_0.compute_delta(&ss_back_mod_1);
+        let ss_tweaked_1 = ss_1.tweak(&tweaks_1);
+        let ss_back_tweaked_1 = ss_1_back.tweak(&tweaks_back_1);
+        let bgpk_delta = ss_tweaked_0.compute_delta(&ss_back_tweaked_1);
 
-        let bgpk_mod_1: Vec<_> = ss_mod_1.tweaked_bgpks.iter().map(|x| x.unwrap()).collect();
-        let ec_tpk_2 = EvolvingCommitteeTpk::with_c(fc_tpk_1.c);
         let sigs: Vec<_> = signers_1.iter().map(|s| s.sign_g1(msg)).collect();
-        let agg_sig_mod_1 = aggregate_sigs(sigs, signers_pks_g1_1, bgpk_mod_1, &config_0);
+        let ec_sig_agg_1 = ss_tweaked_1.into_signature_aggregator();
+        let ec_asig_1 = ec_sig_agg_1.aggregate(sigs);
+        ec_tpk_1.verify_sig(&ec_asig_1, msg.into_affine(), h2_pred_1);
 
-        ec_tpk_2.verify_sig(&agg_sig_mod_1, msg.into_affine(), h2_pred_1);
-
-        let sig = EcAggThresholdSig {
-            asig: agg_sig_mod_1.asig,
-            apk_g1: agg_sig_mod_1.apk_g1,
-            apk_g2: agg_sig_mod_1.apk_g2,
-            abgpk_tweaked: (agg_sig_mod_1.abgpk_tweaked - bgpk_delta).into_affine(),
+        let ec_asig_1_minus_delta = EcAggThresholdSig {
+            asig: ec_asig_1.asig,
+            apk_g1: ec_asig_1.apk_g1,
+            apk_g2: ec_asig_1.apk_g2,
+            abgpk_tweaked: (ec_asig_1.abgpk_tweaked - bgpk_delta).into_affine(),
         };
-        ec_tpk.verify_sig(&sig, msg.into_affine(), h2_pred_1);
+        ec_tpk.verify_sig(&ec_asig_1_minus_delta, msg.into_affine(), h2_pred_1);
     }
 
     #[test]

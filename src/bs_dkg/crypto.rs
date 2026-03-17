@@ -56,6 +56,13 @@ impl<C: Pairing> EvolvingCommitteeTpk<C> {
     }
 }
 
+struct EcSig<C: Pairing> {
+    pub sig: C::G1Affine,
+    pub pk_g1: C::G1Affine,
+    pub pk_g2: C::G2Affine,
+    pub bgpk_tweaked: C::G2Affine,
+}
+
 pub fn aggregate_sigs<C: Pairing>(
     bls_sigs: Vec<StandaloneSig<C>>,
     pks_g1: Vec<C::G1Affine>,

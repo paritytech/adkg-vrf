@@ -1,4 +1,5 @@
 pub mod crypto;
+pub mod sig_agg;
 
 use crate::bls::vanilla::BlsSigner;
 use crate::dkg::deal_and_sign;
@@ -6,7 +7,6 @@ use crate::dkg::transcript::{ContributionReceipt, Transcript};
 use crate::hash_to_curve::PairingWithG2Map;
 use crate::{pvss, VerifiedSharing, VerifiedSharingAndBack, VerifiedSharingWithG1Keys};
 use ark_ec::pairing::Pairing;
-use ark_ec::AffineRepr;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 
