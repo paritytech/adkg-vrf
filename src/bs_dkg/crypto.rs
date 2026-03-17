@@ -1,3 +1,5 @@
+use crate::bs_dkg::BsDkg;
+use crate::hash_to_curve::CurveWithPairingAndHash;
 use crate::utils::BarycentricDomain;
 use crate::{pvss, PairingWithG1Map};
 use ark_ec::pairing::Pairing;
@@ -19,9 +21,12 @@ pub(crate) struct EvolvingCommitteeSig<C: Pairing> {
     pub(crate) bgpk: C::G2Affine,
 }
 
-pub struct EvolvingCommitteeAggSig<C: Pairing>(pub(crate) EvolvingCommitteeSig<C>);
+pub struct EvolvingCommitteeAggSig<C: Pairing> {
+    pub(crate) sid: u64,
+    pub(crate) asig: EvolvingCommitteeSig<C>,
+}
 
-impl<C: PairingWithG1Map> EvolvingCommitteePk<C> {
+impl<C: CurveWithPairingAndHash> EvolvingCommitteePk<C> {
     pub fn with_c(c: C::G1Affine) -> Self {
         Self {
             c,
@@ -30,24 +35,26 @@ impl<C: PairingWithG1Map> EvolvingCommitteePk<C> {
         }
     }
 
-    pub fn verify(&self, sig: &EvolvingCommitteeAggSig<C>, msg: &[u8], h2_pred: C::G2Affine) {
+    pub fn verify(&self, sig: &EvolvingCommitteeAggSig<C>, msg: &[u8]) {
         let msg_in_g1 = C::hash_to_g1(msg).unwrap();
+        let h2_pred = BsDkg::<C>::h2_of(sig.sid);
         self.verify_point(sig, msg_in_g1, h2_pred)
     }
 
     pub fn verify_point(&self, sig: &EvolvingCommitteeAggSig<C>, msg: C::G1Affine, h2_pred: C::G2Affine) {
+        let sig = &sig.asig;
         // BLS aggregate public keys consistency across `G1` and `G2`.
         // `apk_g1 = ask.g1` and `apk_g2 = ask.g2` for some `ask`.
         // `e(g1, apk_g2) = e(apk_g1, g2)`
         assert_eq!(
-            C::pairing(self.g1, sig.0.pk_g2),
-            C::pairing(sig.0.pk_g1, self.g2)
+            C::pairing(self.g1, sig.pk_g2),
+            C::pairing(sig.pk_g1, self.g2)
         );
         // BLS signature verification against a public key in `G2`.
         // `e(asig, g2) = e(msg, apk_g2)`
         assert_eq!(
-            C::pairing(sig.0.sig, self.g2),
-            C::pairing(msg, sig.0.pk_g2)
+            C::pairing(sig.sig, self.g2),
+            C::pairing(msg, sig.pk_g2)
         );
         // Aggregation consistency.
         // Let `h2 = sh.g2`, then `sh.pk_j = sh.(sk_j.g2) = sk_j.(sh.g2) = sk_j.h2`.
@@ -56,8 +63,8 @@ impl<C: PairingWithG1Map> EvolvingCommitteePk<C> {
         // `bgpk_tweaked_j = bgpk_j + tweak_j = f(w^j).g2 + sk_j.h2_pred`
         // `e(g1, abgpk_tweaked) = e(C, g2) + e(apk_g1, h2_pred)`
         assert_eq!(
-            C::pairing(self.g1, sig.0.bgpk),
-            C::multi_pairing(&[self.c, sig.0.pk_g1], &[self.g2, h2_pred])
+            C::pairing(self.g1, sig.bgpk),
+            C::multi_pairing(&[self.c, sig.pk_g1], &[self.g2, h2_pred])
         );
         // TODO: e(C, g2) is constant
         // TODO: prepare h2_pred
@@ -67,7 +74,7 @@ impl<C: PairingWithG1Map> EvolvingCommitteePk<C> {
 pub fn aggregate_ec_sigs<C: Pairing>(
     augmented_sigs: Vec<Option<EvolvingCommitteeSig<C>>>,
     config: &pvss::Config<C>,
-) -> EvolvingCommitteeAggSig<C> {
+) -> EvolvingCommitteeSig<C> {
     assert_eq!(augmented_sigs.len(), config.n);
     let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
     bitmask.resize(config.domain.size(), false);
@@ -84,10 +91,10 @@ pub fn aggregate_ec_sigs<C: Pairing>(
     let apk_g1 = C::G1::msm(&pks_g1, &lis).unwrap().into_affine();
     let apk_g2 = C::G2::msm(&pks_g2, &lis).unwrap().into_affine();
     let abgpk = C::G2::msm(&bgpks, &lis).unwrap().into_affine();
-    EvolvingCommitteeAggSig(EvolvingCommitteeSig {
+    EvolvingCommitteeSig {
         sig: asig,
         pk_g1: apk_g1,
         pk_g2: apk_g2,
         bgpk: abgpk,
-    })
+    }
 }

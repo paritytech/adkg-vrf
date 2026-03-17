@@ -62,10 +62,10 @@ impl<C: Pairing> BlsSigner<C> {
         }
     }
 
-    pub fn sign_g2(&self, m: C::G2) -> C::G2Affine {
+    pub fn sign_g2_point(&self, m: C::G2) -> (C::G2Affine, C::G2Affine) {
         let sig = m * self.sk;
         let sig = sig.into_affine();
-        sig
+        (sig, self.pk_g2)
     }
 
     pub fn pk_in_g1(&self) -> (C::ScalarField, C::G1Affine) {
@@ -87,11 +87,6 @@ impl<C: PairingWithG1Map> BlsSigner<C>
 
     pub fn hash_to_g1<M: CanonicalSerialize>(msg: M) -> C::G1Affine {
         C::hash_serializable_to_g1(&msg).unwrap()
-    }
-
-    pub fn hash_and_sign<M: CanonicalSerialize>(&self, m: M) -> BlsSig<C> {
-        let m_hash_g1 = Self::hash_to_g1(m);
-        self.sign_g1_point(m_hash_g1)
     }
 }
 

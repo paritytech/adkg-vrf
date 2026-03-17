@@ -153,6 +153,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             params: self.curr.params.clone(),
         };
         let back_sharing = VerifiedSharingWithG1Keys {
+            sid: session_id,
             verified_sharing: back_sharing,
             signers_g1: self.curr.signers_g1.clone(),
             h2_pred: self.h2_curr(),
@@ -162,6 +163,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             params: self.next.params.clone(),
         };
         let next_sharing = VerifiedSharingWithG1Keys {
+            sid: session_id,
             verified_sharing: next_sharing,
             signers_g1: self.next.signers_g1.clone(),
             h2_pred: self.h2_next(),
@@ -179,6 +181,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             params: self.curr.params.clone(),
         };
         VerifiedSharingWithG1Keys {
+            sid: self.session_id,
             verified_sharing,
             signers_g1: self.curr.signers_g1.clone(),
             h2_pred: self.h2_next(),
@@ -188,6 +191,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
 
 #[derive(Clone, Debug)]
 pub struct VerifiedSharingWithG1Keys<C: Pairing> {
+    sid: u64,
     verified_sharing: VerifiedSharing<C>,
     signers_g1: Vec<C::G1Affine>,
     h2_pred: C::G2Affine,
@@ -208,6 +212,7 @@ impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
         // TODO: verify
         let tweaked_bgpks = self.tweak_bgpks(sigs);
         TweakedSharing {
+            sid: self.sid,
             secret_sharing: self.verified_sharing,
             signers_g1: self.signers_g1,
             tweaked_bgpks,
@@ -226,6 +231,7 @@ pub struct VerifiedSharingAndBack<C: Pairing> {
 
 #[derive(Clone, Debug)]
 pub struct TweakedSharing<C: Pairing> {
+    sid: u64,
     /// Secret shared to signers with keys in G2.
     secret_sharing: VerifiedSharing<C>,
     /// Signers' keys in G1 in the same order as `self.secret_sharing.params.signer_pks`
@@ -253,14 +259,14 @@ impl<C: Pairing> TweakedSharing<C> {
     }
 
     pub fn into_signature_aggregator(self) -> EcSigAgg<C> {
-        EcSigAgg::new(self.secret_sharing.params.signer_pks, self.signers_g1, self.tweaked_bgpks, self.secret_sharing.params.config)
+        EcSigAgg::new(self.sid, self.secret_sharing.params.signer_pks, self.signers_g1, self.tweaked_bgpks, self.secret_sharing.params.config)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bs_dkg::crypto::{EvolvingCommitteeAggSig, EvolvingCommitteePk, EvolvingCommitteeSig};
+    use crate::bs_dkg::crypto::EvolvingCommitteePk;
     use ark_bls12_381::Bls12_381;
     use ark_std::test_rng;
 
@@ -278,36 +284,31 @@ mod tests {
 
         // Protocol and the participants
         let (n, t) = (7, 5);
-
         let signers_0: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
         let signers_1: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
         let committee_0 = committee(&signers_0, t);
         let committee_1 = committee(&signers_1, t);
         let dealer = signers_0[0].clone();
 
-        let bs_dkg = BsDkg::start(committee_0);
+        // EPOCH #0
 
         // Deals secret shares to the epoch #0 committee (noone to backshare to)
+        let bs_dkg = BsDkg::start(committee_0);
         let transcript = bs_dkg.deal_first(dealer.clone(), rng).unwrap();
         let ss_0 = bs_dkg.verify_first(transcript, rng);
         let h2_pred_0 = ss_0.h2_pred;
         let ec_pk = EvolvingCommitteePk::with_c(ss_0.verified_sharing.secret_sharing.c);
 
-        // Tests a threshold signature at epoch 0
-
-
         // Tweaks the key material (`bgpks` and `h2`)
         let tweak_msg_0 = ss_0.tweak_msg();
-        let tweaks_0: Vec<_> = signers_0.iter()
-            .map(|s| (s.sign_g2(tweak_msg_0), s.pk_g2))
-            .collect();
+        let tweaks_0: Vec<_> = signers_0.iter().map(|s| s.sign_g2_point(tweak_msg_0)).collect();
         let ss_tweaked_0 = ss_0.tweak(&tweaks_0);
 
-
+        // Tests a threshold signature at epoch 0
         let sig_agg_0 = ss_tweaked_0.clone().into_signature_aggregator();
         let sigs_0: Vec<_> = signers_0[..t].iter().map(|s| s.sign_bytes_in_g1(b"msg0")).collect();
         let asig_0 = sig_agg_0.aggregate(sigs_0);
-        ec_pk.verify(&asig_0, b"msg0", h2_pred_0);
+        ec_pk.verify(&asig_0, b"msg0");
 
         // EPOCH #1
         let bs_dkg = bs_dkg.next(committee_1);
@@ -321,11 +322,11 @@ mod tests {
         // TWEAKS
         let tweak_msg_1 = ss_1.tweak_msg();
         let tweaks_1: Vec<_> = signers_1.iter()
-            .map(|s| (s.sign_g2(tweak_msg_1), s.pk_g2))
+            .map(|s| s.sign_g2_point(tweak_msg_1))
             .collect();
         let tweak_msg_back_1 = ss_1_back.tweak_msg();
         let tweaks_back_1: Vec<_> = signers_0.iter()
-            .map(|s| (s.sign_g2(tweak_msg_back_1), s.pk_g2))
+            .map(|s| s.sign_g2_point(tweak_msg_back_1))
             .collect();
         let ss_tweaked_1 = ss_1.tweak(&tweaks_1);
         let ss_back_tweaked_1 = ss_1_back.tweak(&tweaks_back_1);
@@ -333,15 +334,10 @@ mod tests {
 
         let sig_agg_1 = ss_tweaked_1.into_signature_aggregator();
         let sigs_1: Vec<_> = signers_1[n - t..].iter().map(|s| s.sign_bytes_in_g1(b"msg1")).collect();
-        let asig_1 = sig_agg_1.aggregate(sigs_1);
-        ec_pk_1.verify(&asig_1, b"msg1", h2_pred_1);
+        let mut asig_1 = sig_agg_1.aggregate(sigs_1);
+        ec_pk_1.verify(&asig_1, b"msg1");
 
-        let ec_asig_1 = EvolvingCommitteeAggSig(EvolvingCommitteeSig {
-            sig: asig_1.0.sig,
-            pk_g1: asig_1.0.pk_g1,
-            pk_g2: asig_1.0.pk_g2,
-            bgpk: (asig_1.0.bgpk - bgpk_delta).into_affine(),
-        });
-        ec_pk.verify(&ec_asig_1, b"msg1", h2_pred_1);
+        asig_1.asig.bgpk = (asig_1.asig.bgpk - bgpk_delta).into_affine();
+        ec_pk.verify(&asig_1, b"msg1");
     }
 }

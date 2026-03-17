@@ -11,6 +11,8 @@ struct PkExt<C: Pairing> {
 }
 
 pub struct EcSigAgg<C: Pairing> {
+    /// Epoch id
+    sid: u64,
     /// PVSS config
     config: pvss::Config<C>,
     /// map pk_g2_j -> (j, pk_g1_j, bgpk_tweaked_j)
@@ -19,6 +21,7 @@ pub struct EcSigAgg<C: Pairing> {
 
 impl<C: Pairing> EcSigAgg<C> {
     pub fn new(
+        sid: u64,
         pks_g2: Vec<C::G2Affine>,
         pks_g1: Vec<C::G1Affine>,
         bgpks: Vec<Option<C::G2Affine>>,
@@ -32,6 +35,7 @@ impl<C: Pairing> EcSigAgg<C> {
                 bgpk.map(|bgpk_tweaked| (pk_g2, PkExt { j, pk_g1, bgpk: bgpk_tweaked })))
             .collect();
         Self {
+            sid,
             config,
             pk_ext,
         }
@@ -52,6 +56,10 @@ impl<C: Pairing> EcSigAgg<C> {
                 augmented_sigs[j] = Some(sig_ext);
             }
         });
-        aggregate_ec_sigs(augmented_sigs, &self.config)
+        let asig = aggregate_ec_sigs(augmented_sigs, &self.config);
+        EvolvingCommitteeAggSig {
+            sid: self.sid,
+            asig,
+        }
     }
 }
