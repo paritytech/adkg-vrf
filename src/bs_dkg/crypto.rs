@@ -1,11 +1,9 @@
 use crate::bs_dkg::BsDkg;
 use crate::hash_to_curve::CurveWithPairingAndHash;
 use crate::pvss;
-use crate::utils::BarycentricDomain;
+use crate::sig_agg::prepare;
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::Zero;
-use ark_poly::EvaluationDomain;
 
 pub struct EvolvingCommitteePk<C: Pairing> {
     pub c: C::G1Affine,
@@ -75,14 +73,7 @@ pub fn aggregate_ec_sigs<C: Pairing>(
     augmented_sigs: Vec<Option<EvolvingCommitteeSig<C>>>,
     config: &pvss::Config<C>,
 ) -> EvolvingCommitteeSig<C> {
-    assert_eq!(augmented_sigs.len(), config.n);
-    let mut bitmask: Vec<bool> = augmented_sigs.iter().map(|o| o.is_some()).collect();
-    bitmask.resize(config.domain.size(), false);
-    let set_bits_count = bitmask.iter().filter(|b| **b).count();
-    assert!(set_bits_count >= config.t);
-    let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
-        .lagrange_basis_at(C::ScalarField::zero());
-    let augmented_sigs: Vec<EvolvingCommitteeSig<C>> = augmented_sigs.into_iter().flatten().collect();
+    let (lis, augmented_sigs) = prepare(augmented_sigs, &config);
     let sigs: Vec<C::G1Affine> = augmented_sigs.iter().map(|s| s.sig).collect();
     let pks_g1: Vec<C::G1Affine> = augmented_sigs.iter().map(|s| s.pk_g1).collect();
     let pks_g2: Vec<C::G2Affine> = augmented_sigs.iter().map(|s| s.pk_g2).collect();
