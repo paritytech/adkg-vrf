@@ -12,6 +12,7 @@ use crate::{pvss, VerifiedSharing};
 use ark_ec::pairing::Pairing;
 use ark_ec::VariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::Zero;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 use hashbrown::HashMap;
@@ -145,7 +146,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             signers_g2: self.curr.params.signer_pks.clone(),
             h2_pred: self.h2_curr(),
             tweaks: vec![],
-            abgpk_delta: C::G2Affine::zero(),
+            abgpk_delta: C::G2::zero(),
         };
         let _next_sharing = VerifiedSharing {
             secret_sharing: next_sharing.agg_ss.payload.clone(),
@@ -160,7 +161,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             signers_g2: self.next.params.signer_pks.clone(),
             h2_pred: self.h2_next(),
             tweaks: vec![],
-            abgpk_delta: C::G2Affine::zero(),
+            abgpk_delta: C::G2::zero(),
         };
 
         VerifiedSharingAndBack {
@@ -184,7 +185,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             signers_g2: self.curr.params.signer_pks.clone(),
             h2_pred: self.h2_next(),
             tweaks: vec![],
-            abgpk_delta: C::G2Affine::zero(),
+            abgpk_delta: C::G2::zero(),
         }
     }
 }
@@ -199,7 +200,7 @@ pub struct VerifiedSharingWithG1Keys<C: Pairing> {
     signers_g2: Vec<C::G2Affine>,
     h2_pred: C::G2Affine,
     tweaks: Vec<Option<C::G2Affine>>,
-    abgpk_delta: C::G2Affine,
+    abgpk_delta: C::G2,
 }
 
 impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
@@ -258,19 +259,27 @@ impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
 
     /// Computes (f0(0) - f1_back(0)).g2
     /// `deg(f0) = deg(f1_back) = t0 - 1`.
-    pub fn compute_delta(&self, bs: &Self) -> C::G2Affine {
+    pub fn compute_delta(&self, bs: &Self) -> C::G2 {
         let bgpk_deltas: Vec<Option<C::G2>> = self.tweaked_bpks().into_iter()
             .zip(bs.tweaked_bpks().into_iter())
             .map(|(curr, bs)| curr.zip(bs).map(|(curr, bs)| bs - curr))
             .collect();
         let (lis_at_zero, bgpk_deltas) = prepare(bgpk_deltas, &self.config);
         let bgpk_deltas = C::G2::normalize_batch(&bgpk_deltas);
-        C::G2::msm(&bgpk_deltas, &lis_at_zero).unwrap().into_affine()
+        C::G2::msm(&bgpk_deltas, &lis_at_zero).unwrap()
     }
+
+    pub fn consume_back_sharing(&self, next: VerifiedSharingAndBack<C>) -> VerifiedSharingWithG1Keys<C> {
+        let new_delta = self.compute_delta(&next.back_sharing);
+        let mut next = next.next_sharing;
+        next.abgpk_delta = self.abgpk_delta + new_delta;
+        next
+    }
+
 
     pub fn into_combiner(self) -> EcSigAgg<C> {
         let bgpks = self.tweaks.iter().enumerate().map(|(j, sig)| sig.map(|sig| (sig + self.ss.bgpk[j]).into_affine())).collect();
-        EcSigAgg::new(self.sid, self.signers_g2, self.signers_g1, bgpks, self.config)
+        EcSigAgg::new(self.sid, self.signers_g2, self.signers_g1, bgpks, self.abgpk_delta, self.config)
     }
 }
 
@@ -366,10 +375,10 @@ mod tests {
         // EPOCH #1
         let bs_dkg = bs_dkg.next(committee_1);
         let bs_transcript = bs_dkg.deal(dealer, rng).unwrap();
-        let verified_bs = bs_dkg.verify(bs_transcript, rng);
-        let mut ss_1 = verified_bs.next_sharing;
+        let mut verified_bs = bs_dkg.verify(bs_transcript, rng);
+        let ss_1 = &mut verified_bs.next_sharing;
         let c1 = ss_1.verified_sharing.secret_sharing.c;
-        let mut ss_1_back = verified_bs.back_sharing;
+        let ss_1_back = &mut verified_bs.back_sharing;
 
         // TWEAKS
         let tweak_msg_1 = ss_1.tweak_msg();
@@ -384,15 +393,12 @@ mod tests {
         ss_1.tweak_self(tweaks_1);
         // let ss_back_tweaked_1 = ss_1_back.tweak(&tweaks_back_1);
         ss_1_back.tweak_self(tweaks_back_1);
-        let bgpk_delta = ss_0.compute_delta(&ss_1_back);
-        let ec_pk_1 = EvolvingCommitteePk::with_c(c1);
+        // let bgpk_delta = ss_0.compute_delta(&ss_1_back);
+        let ss_1 = ss_0.consume_back_sharing(verified_bs);
 
         let sig_agg_1 = ss_1.into_combiner();
         let sigs_1: Vec<_> = signers_1[n - t..].iter().map(|s| s.sign_bytes_in_g1(b"msg1")).collect();
-        let mut asig_1 = sig_agg_1.aggregate(sigs_1);
-        ec_pk_1.verify(&asig_1, b"msg1");
-
-        asig_1.asig.bgpk = (asig_1.asig.bgpk - bgpk_delta).into_affine();
+        let asig_1 = sig_agg_1.aggregate(sigs_1);
         ec_pk.verify(&asig_1, b"msg1");
     }
 }

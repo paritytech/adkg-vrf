@@ -2,7 +2,9 @@ use crate::bls::vanilla::BlsSig;
 use crate::bs_dkg::crypto::{aggregate_ec_sigs, EvolvingCommitteeAggSig, EvolvingCommitteeSig};
 use crate::pvss;
 use ark_ec::pairing::Pairing;
+use ark_ec::CurveGroup;
 use hashbrown::HashMap;
+
 
 struct PkExt<C: Pairing> {
     j: usize,
@@ -17,6 +19,7 @@ pub struct EcSigAgg<C: Pairing> {
     config: pvss::Config<C>,
     /// map pk_g2_j -> (j, pk_g1_j, bgpk_tweaked_j)
     pk_ext: HashMap<C::G2Affine, PkExt<C>>,
+    bgpk_delta: C::G2,
 }
 
 impl<C: Pairing> EcSigAgg<C> {
@@ -25,6 +28,7 @@ impl<C: Pairing> EcSigAgg<C> {
         pks_g2: Vec<C::G2Affine>,
         pks_g1: Vec<C::G1Affine>,
         bgpks: Vec<Option<C::G2Affine>>,
+        bgpk_delta: C::G2,
         config: pvss::Config<C>,
     ) -> Self {
         let pk_ext: HashMap<_, _> = pks_g2.into_iter()
@@ -38,6 +42,7 @@ impl<C: Pairing> EcSigAgg<C> {
             sid,
             config,
             pk_ext,
+            bgpk_delta,
         }
     }
 
@@ -56,7 +61,8 @@ impl<C: Pairing> EcSigAgg<C> {
                 augmented_sigs[j] = Some(sig_ext);
             }
         });
-        let asig = aggregate_ec_sigs(augmented_sigs, &self.config);
+        let mut asig = aggregate_ec_sigs(augmented_sigs, &self.config);
+        asig.bgpk = (asig.bgpk - self.bgpk_delta).into_affine();
         EvolvingCommitteeAggSig {
             sid: self.sid,
             asig,
