@@ -222,6 +222,15 @@ mod tests {
     // 5. new signature type
     // 6. aggregation for that
     // basically 2 cryptosuites, ideally with a fall-back option
+```
+    fn committee<C: Pairing>(signers: &[BlsSigner<C>], t: usize) -> Committee<C> {
+        let pks_g1: Vec<_> = signers.iter().map(|s| s.bls_pk_g1).collect();
+        let pks_g2: Vec<_> = signers.iter().map(|s| s.bls_pk_g2).collect();
+        Committee {
+            params: pvss::Params::<C>::new(pks_g2, t).unwrap(),
+            signers_g1: pks_g1,
+        }
+    }
 
     #[test]
     fn test_back_sharing() {
@@ -231,36 +240,24 @@ mod tests {
         let (n, t) = (7, 5);
 
         let signers_0: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
-        let signers_pks_g2_0: Vec<_> = signers_0.iter().map(|s| s.bls_pk_g2).collect();
-        let signers_pks_g1_0: Vec<_> = signers_0.iter().map(|s| s.bls_pk_g1).collect();
+        let signers_1: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
+        let committee_0 = committee(&signers_0, t);
+        let committee_1 = committee(&signers_1, t);
         let dealer = signers_0[0].clone();
 
-        let signers_1: Vec<BlsSigner<Bls12_381>> = (0..n).map(|_| BlsSigner::new(rng)).collect();
-        let signers_pks_g2_1: Vec<_> = signers_1.iter().map(|s| s.bls_pk_g2).collect();
-        let signers_pks_g1_1: Vec<_> = signers_1.iter().map(|s| s.bls_pk_g1).collect();
-
-        let committee_0 = Committee {
-            params: pvss::Params::<Bls12_381>::new(signers_pks_g2_0.clone(), t).unwrap(),
-            signers_g1: signers_pks_g1_0.clone(),
-        };
-        let committee_1 = Committee {
-            params: pvss::Params::<Bls12_381>::new(signers_pks_g2_1.clone(), t).unwrap(),
-            signers_g1: signers_pks_g1_1.clone(),
-        };
         let bs_dkg = BsDkg::start(committee_0);
 
         // Deals secret shares to the epoch #1 committee (no-one to backshare to)
-        let transcript = bs_dkg.deal_first(dealer, rng).unwrap();
+        let transcript = bs_dkg.deal_first(dealer.clone(), rng).unwrap();
         let ss_0 = bs_dkg.verify_first(transcript, rng);
-        let config_0 = ss_0.verified_sharing.params.config.clone();
         let h2_pred_0 = ss_0.h2_pred;
-        let (fc_tpk_0, fc_sig_aggregator_0) = ss_0.verified_sharing.clone().into_keys();
+        let (fc_tpk_0, fc_sig_agg_0) = ss_0.verified_sharing.clone().into_keys();
         let ec_tpk = EvolvingCommitteeTpk::with_c(fc_tpk_0.c);
 
         // Tests a threshold signature at epoch 0
         let msg = BlsSigner::<Bls12_381>::hash_to_g1("message".as_bytes()).into_group();
         let sigs: Vec<_> = signers_0.iter().map(|s| s.sign_g1(msg)).collect();
-        let fc_asig_0 = fc_sig_aggregator_0.aggregate_wo_checking(sigs.clone());
+        let fc_asig_0 = fc_sig_agg_0.aggregate_wo_checking(sigs.clone());
         fc_tpk_0.verify_unoptimized(&fc_asig_0, msg);
 
         // Tweaks the key material (`bgpks` and `h2`)
@@ -271,11 +268,11 @@ mod tests {
         let ss_tweaked_0 = ss_0.tweak(&tweaks_0);
 
         let ec_sig_agg_0 = ss_tweaked_0.clone().into_signature_aggregator();
-        let agg_sig_mod_0 = ec_sig_agg_0.aggregate(sigs);
-        ec_tpk.verify_sig(&agg_sig_mod_0, msg.into_affine(), h2_pred_0);
+        let ec_asig_0 = ec_sig_agg_0.aggregate(sigs);
+        ec_tpk.verify_sig(&ec_asig_0, msg.into_affine(), h2_pred_0);
 
         let bs_dkg = bs_dkg.next(committee_1);
-        let bs_transcript = bs_dkg.deal(signers_0[0].clone(), rng).unwrap();
+        let bs_transcript = bs_dkg.deal(dealer, rng).unwrap();
         let verified_bs = bs_dkg.verify(bs_transcript, rng);
         let ss_1 = verified_bs.next_sharing;
         let ss_1_back = verified_bs.back_sharing;

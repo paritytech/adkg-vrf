@@ -76,7 +76,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::hash_to_curve::{CurveWithPairingAndHash, PairingWithG1Map};
+    use crate::hash_to_curve::CurveWithPairingAndHash;
 
     fn test_g1_map<C: CurveWithPairingAndHash>() {
         assert!(C::hash_to_g1(b"map-to-g1").is_ok());
