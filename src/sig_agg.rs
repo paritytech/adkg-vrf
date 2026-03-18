@@ -4,6 +4,7 @@ use ark_poly::EvaluationDomain;
 use ark_std::Zero;
 use ark_std::{vec, vec::Vec};
 use hashbrown::HashMap;
+use std::iter;
 
 use crate::bls::threshold::AggThresholdSig;
 use crate::bls::vanilla::BlsSig;
@@ -21,22 +22,45 @@ use ark_ec::CurveGroup;
 /// Requires `config.t <= s <= config.n`.
 ///
 /// If `points[i] = p(w^{i})` for a degree `t < s` polynomial `p`, then `p(0) = L_1(0).points[i_1] + ... + L_s(0).points[i_s]`.
+/// As an optimization, `s = config.t`.
 pub fn evaluate_lagrange_basis_at_0<T, C: Pairing>(opt_points: Vec<Option<T>>, config: &pvss::Config<C>) -> (Vec<C::ScalarField>, Vec<T>) {
     assert_eq!(opt_points.len(), config.n);
-    let mut bitmask: Vec<bool> = opt_points.iter().map(|opt| opt.is_some()).collect();
-    bitmask.resize(config.domain.size(), false);
-    let points: Vec<T> = opt_points.into_iter().flatten().collect();
-    assert!(points.len() >= config.t);
+    let mut set_bits = 0;
+    let bitmask: Vec<bool> = opt_points.iter()
+        .scan(&mut set_bits, |counter, opt| {
+            if **counter == config.t {
+                return None;
+            }
+            if opt.is_some() {
+                **counter += 1;
+            }
+            Some(opt.is_some())
+        })
+        .chain(iter::repeat(false))
+        .take(config.domain.size())
+        .collect();
+    assert!(set_bits == config.t);
     let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
         .lagrange_basis_at(C::ScalarField::zero());
+    let points: Vec<T> = opt_points.into_iter()
+        .flatten()
+        .take(config.t)
+        .collect();
+    debug_assert_eq!(lis.len(), config.t);
+    debug_assert_eq!(points.len(), config.t);
     (lis, points)
 }
 
-/// Assuming `points[i] = p(w^{i}).g2`, returns `p(0).g2`
-pub fn evaluate_at_0_in_g2<C: Pairing>(points: Vec<Option<C::G2>>, config: &pvss::Config<C>) -> C::G2 {
-    let (lis_at_zero, points) = evaluate_lagrange_basis_at_0(points, config);
-    let points = C::G2::normalize_batch(&points);
-    C::G2::msm(&points, &lis_at_zero).unwrap()
+/// Assuming `evals[i] = p(w^{i}).g2`, returns `p(0).g2`
+pub fn evaluate_at_0_in_g2<C: Pairing>(evals_opt: Vec<Option<C::G2>>, config: &pvss::Config<C>) -> Result<C::G2, (usize, usize)> {
+    let n_evals = evals_opt.iter().filter(|opt| opt.is_some()).count();
+    if n_evals < config.t {
+        return Err((n_evals, config.t));
+    }
+    let (lis_at_zero, evals) = evaluate_lagrange_basis_at_0(evals_opt, config);
+    let evals = C::G2::normalize_batch(&evals);
+    let res = C::G2::msm(&evals, &lis_at_zero).unwrap();
+    Ok(res)
 }
 
 /// To aggregate vanilla BLS signatures, they have to be:

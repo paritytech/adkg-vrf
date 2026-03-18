@@ -200,13 +200,11 @@ pub struct VerifiedSharingWithG1Keys<C: Pairing> {
     h2_pred: C::G2Affine,
     tweaks: Vec<Option<C::G2Affine>>,
 
-    /// `gsk_delta = f_curr(0).g2 - f_0(0).g2`
-    /// The difference between the secret `gsk_curr = f_curr(0).g2, curr := sid,` of the current epoch
-    /// and the secret `gsk_0 = f_0(0).g2` of the initial epoch.
-    ///
+    /// The difference between the secrets of the current and the initial epochs.
+    /// The secret key shared at epoch #K is `gsk_k = f_k(0).g2`.
+    /// `self.gsk_delta = gsk_curr - gsk_0`, where `curr := self.sid`.
     /// Allows to verify signatures, produced using the shared secret key of the current epoch,
-    /// with the public key of the initial epoch `C = f_0(0).g1`.
-    ///
+    /// against the public key `C = C_0 = f_0(0).g1` of the initial epoch.
     gsk_delta: C::G2,
 }
 
@@ -215,10 +213,12 @@ impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
     /// The final sharing contains `(h1, h2)`, such that `h1 = sh.h1, h2 = sh.g2` for some `sh`,
     /// that is used to encrypt the `j`-the signer's share of the secret `f(w_j).g2` with ElGamal as
     /// `bgpk_j = f(w^j).g2 + sh.pk_j = f(w^j).g2 + sk_j.h2` for `sk_j.g2 = pk_j.`
+    ///
     /// We want to replace this random `h2 = sh.g2` with a predictable `h2_perm = hash_to_g2(sid)`.
     /// For that each signer, is required to publish a BLS signature (in G2) on `h2_tweak = h2_pred - h2`.
-    /// `tweak_j = sk_j.h2_tweak = sk_j.h2_pred - sk_j.h2`. That allows to adjust `bgpk_j` to
-    /// `bgpk_j_tweaked = bgpk_j + tweak_j = f(w^j).g2 + sk_j.h2_pred` accordingly.
+    /// `tweak_j = sk_j.h2_tweak = sk_j.h2_pred - sk_j.h2`.
+    ///
+    /// That allows to adjust `bgpk_j` to `bgpk_j_tweaked = bgpk_j + tweak_j = f(w^j).g2 + sk_j.h2_pred` accordingly.
     ///
     /// If it doesn't happen signer `j`'s signatures can't be aggregated in the evolving committee scheme.
     ///
@@ -284,7 +284,7 @@ impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
         let f_deltas: Vec<Option<C::G2>> = self.get_tweaked_bgpk_pairs(bs)
             .map(|opt| opt.map(|(curr, back)| back - curr))
             .collect();
-        let delta_f_at_0 = evaluate_at_0_in_g2(f_deltas, &self.config);
+        let delta_f_at_0 = evaluate_at_0_in_g2(f_deltas, &self.config).unwrap(); //TODO
         delta_f_at_0
     }
 
