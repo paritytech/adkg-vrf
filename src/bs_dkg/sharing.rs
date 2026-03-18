@@ -5,7 +5,7 @@ use crate::dkg::transcript::Transcript;
 use crate::hash_to_curve::PairingWithG2Map;
 use crate::pvss::SecretSharing;
 use crate::sig_agg::evaluate_at_0_in_g2;
-use crate::{pvss, VerifiedSharing};
+use crate::pvss;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
@@ -21,7 +21,6 @@ pub struct VerifiedSharingAndBack<C: Pairing> {
 #[derive(Clone, Debug)]
 pub struct VerifiedSharingWithG1Keys<C: Pairing> {
     sid: u64,
-    verified_sharing: VerifiedSharing<C>,
     config: pvss::Config<C>,
     pub(crate) ss: SecretSharing<C>,
     signers_g1: Vec<C::G1Affine>,
@@ -39,13 +38,8 @@ pub struct VerifiedSharingWithG1Keys<C: Pairing> {
 
 impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
     pub fn from_silent_transcript(transcript: Transcript<C>, committee: &Committee<C>, sid: u64) -> Self {
-        let verified_sharing = VerifiedSharing {
-            secret_sharing: transcript.agg_ss.payload.clone(),
-            params: committee.params.clone(),
-        };
         Self {
             sid,
-            verified_sharing,
             config: committee.params.config.clone(),
             ss: transcript.agg_ss.payload,
             signers_g1: committee.signers_g1.clone(),
@@ -70,7 +64,7 @@ impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
     /// If it doesn't happen signer `j`'s signatures can't be aggregated in the evolving committee scheme.
     ///
     pub fn h2_tweak(&self) -> C::G2 {
-        self.h2_pred - self.verified_sharing.secret_sharing.h2
+        self.h2_pred - self.ss.h2
     }
 
     pub fn tweak_self(&mut self, sigs: Vec<BlsSigInG2<C>>) {

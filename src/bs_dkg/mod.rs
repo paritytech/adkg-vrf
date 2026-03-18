@@ -47,14 +47,14 @@ pub struct Committee<C: Pairing> {
 }
 
 pub struct BsTranscript<C: Pairing> {
-    pub sid: u64,
+    pub next_committee_id: u64,
     pub next_transcript: Transcript<C>,
     pub back_transcript: Transcript<C>,
 }
 
 pub struct BsDkg<C: Pairing> {
-    /// ordinal of the next committee
-    pub sid: u64,
+    /// Ordinal of the next committee.
+    pub next_committee_id: u64,
     /// Current set of signers (aka committee). Jointly know the secret of their epoch
     /// They share the new secret among the next set of signers,
     /// AND separately (via a different polynomial) "backshare" among themselves.
@@ -67,17 +67,20 @@ pub struct BsDkg<C: Pairing> {
 }
 
 impl<C: PairingWithG2Map> BsDkg<C> {
+
+    /// In epoch #0 the assigned committee (`self.curr`) deals to itself (`self.next`).
+    /// There is no backsharing as there's noone to backshare to (current committee).
     pub fn start(next: Committee<C>) -> Self {
         Self {
-            sid: 0,
+            next_committee_id: 0,
             curr: next.clone(),
             next,
         }
     }
 
-    pub fn init(sid: u64, curr: Committee<C>, next: Committee<C>) -> Self {
+    pub fn init(next_committee_id: u64, curr: Committee<C>, next: Committee<C>) -> Self {
         Self {
-            sid,
+            next_committee_id,
             curr,
             next,
         }
@@ -85,7 +88,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
 
     pub fn next(self, next: Committee<C>) -> Self {
         Self {
-            sid: self.sid + 1,
+            next_committee_id: self.next_committee_id + 1,
             curr: self.next,
             next,
         }
@@ -98,12 +101,12 @@ impl<C: PairingWithG2Map> BsDkg<C> {
 
     /// Predictable `h2` corresponding to the current round of the protocol.
     fn h2_curr(&self) -> C::G2Affine {
-        Self::h2_of(self.sid - 1)
+        Self::h2_of(self.next_committee_id - 1)
     }
 
     /// Predictable `h2` corresponding to the next round of the protocol.
     fn h2_next(&self) -> C::G2Affine {
-        Self::h2_of(self.sid)
+        Self::h2_of(self.next_committee_id)
     }
 
     /// The same secret `ssk = f(0).g1` is
@@ -113,7 +116,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
         let ssk = C::ScalarField::rand(rng);
         let next_transcript = deal_and_sign_ssk(ssk, &self.next.params, rng, dealer.as_tuple()).unwrap();
         let back_transcript = deal_and_sign_ssk(ssk, &self.curr.params, rng, dealer.as_tuple()).unwrap();
-        Ok(BsTranscript { sid: self.sid, next_transcript, back_transcript })
+        Ok(BsTranscript { next_committee_id: self.next_committee_id, next_transcript, back_transcript })
     }
 
     pub fn deal_first<R: Rng>(&self, dealer: BlsSigner<C>, rng: &mut R) -> Result<Transcript<C>, ()> {
@@ -123,13 +126,14 @@ impl<C: PairingWithG2Map> BsDkg<C> {
     // TODO: this is a stub
     pub fn verify<R: Rng>(&self, bs_transcript: BsTranscript<C>, rng: &mut R) -> VerifiedSharingAndBack<C> {
         let BsTranscript {
-            sid,
+            next_committee_id,
             next_transcript,
             back_transcript,
         } = bs_transcript;
-        assert_eq!(sid, self.sid);
-        let next_sharing = VerifiedSharingWithG1Keys::from_silent_transcript(next_transcript, &self.next, self.sid);
-        let back_sharing = VerifiedSharingWithG1Keys::from_silent_transcript(back_transcript, &self.curr, self.sid - 1);
+        assert_eq!(next_committee_id, self.next_committee_id);
+        let next_sharing = VerifiedSharingWithG1Keys::from_silent_transcript(next_transcript, &self.next, next_committee_id);
+        // back_sharing doesn't need a sid, but setting it to `next_committee_id - 1 = curr_committee_id` provides the correct `h2_pred = self.h2_curr()`.
+        let back_sharing = VerifiedSharingWithG1Keys::from_silent_transcript(back_transcript, &self.curr, next_committee_id - 1);
         VerifiedSharingAndBack {
             back_sharing,
             next_sharing,
@@ -138,7 +142,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
 
     // TODO: this is a stub
     pub fn verify_first<R: Rng>(&self, transcript: Transcript<C>, rng: &mut R) -> VerifiedSharingWithG1Keys<C> {
-        VerifiedSharingWithG1Keys::from_silent_transcript(transcript, &self.curr, self.sid)
+        VerifiedSharingWithG1Keys::from_silent_transcript(transcript, &self.curr, self.next_committee_id)
     }
 }
 
