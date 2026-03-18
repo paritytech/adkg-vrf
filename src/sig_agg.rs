@@ -11,18 +11,33 @@ use crate::pvss;
 use crate::utils::BarycentricDomain;
 use ark_ec::CurveGroup;
 
-pub fn prepare<T, C: Pairing>(points: Vec<Option<T>>, config: &pvss::Config<C>) -> (Vec<C::ScalarField>, Vec<T>) {
-    assert_eq!(points.len(), config.n);
-    let mut bitmask: Vec<bool> = points.iter().map(|o| o.is_some()).collect();
+/// Evaluations at `0` of Lagrange basis polynomials of the set of "indices" of the points.
+///
+/// Let `n = config.n` and `S` be the set of roots of unity corresponding to the indices of the `points`.
+/// `S = (w^{i_k})` where `1 <= i_1,...,i_s <= n` are such that `points[i_k].is_some(), k=1,...,s`,
+/// and `(L_1,...,L_s) = L_S` -- the Lagrange basis polynomials of `S`: `L_j(w^{i_k}) = 1 iff j = k, j = 1,...,s`.
+///
+/// Returns `(L_1(0),...,L_s(0)` and the corresponding points `(points[i_1], ..., points[i_s])`.
+/// Requires `config.t <= s <= config.n`.
+///
+/// If `points[i] = p(w^{i})` for a degree `t < s` polynomial `p`, then `p(0) = L_1(0).points[i_1] + ... + L_s(0).points[i_s]`.
+pub fn evaluate_lagrange_basis_at_0<T, C: Pairing>(opt_points: Vec<Option<T>>, config: &pvss::Config<C>) -> (Vec<C::ScalarField>, Vec<T>) {
+    assert_eq!(opt_points.len(), config.n);
+    let mut bitmask: Vec<bool> = opt_points.iter().map(|opt| opt.is_some()).collect();
     bitmask.resize(config.domain.size(), false);
-    let set_bits_count = bitmask.iter().filter(|b| **b).count();
-    assert!(set_bits_count >= config.t);
+    let points: Vec<T> = opt_points.into_iter().flatten().collect();
+    assert!(points.len() >= config.t);
     let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
         .lagrange_basis_at(C::ScalarField::zero());
-    let points = points.into_iter().flatten().collect();
     (lis, points)
 }
 
+/// Assuming `points[i] = p(w^{i}).g2`, returns `p(0).g2`
+pub fn evaluate_at_0_in_g2<C: Pairing>(points: Vec<Option<C::G2>>, config: &pvss::Config<C>) -> C::G2 {
+    let (lis_at_zero, points) = evaluate_lagrange_basis_at_0(points, config);
+    let points = C::G2::normalize_batch(&points);
+    C::G2::msm(&points, &lis_at_zero).unwrap()
+}
 
 /// To aggregate vanilla BLS signatures, they have to be:
 /// 1. equipped with the signers' `bgpk`s
@@ -35,7 +50,7 @@ pub fn aggregate_augmented_sigs<C: Pairing>(
     augmented_sigs: Vec<Option<AggThresholdSig<C>>>,
     config: &pvss::Config<C>,
 ) -> AggThresholdSig<C> {
-    let (lis, augmented_sigs) = prepare(augmented_sigs, config);
+    let (lis, augmented_sigs) = evaluate_lagrange_basis_at_0(augmented_sigs, config);
     let bls_sigs: Vec<_> = augmented_sigs
         .iter()
         .map(|s| s.bls_sig_with_pk.sig)

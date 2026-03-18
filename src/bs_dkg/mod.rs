@@ -7,11 +7,10 @@ use crate::dkg::transcript::Transcript;
 use crate::dkg::{deal_and_sign, deal_and_sign_ssk};
 use crate::hash_to_curve::PairingWithG2Map;
 use crate::pvss::SecretSharing;
-use crate::sig_agg::prepare;
+use crate::sig_agg::evaluate_at_0_in_g2;
 use crate::{pvss, VerifiedSharing};
 use ark_ec::pairing::Pairing;
-use ark_ec::VariableBaseMSM;
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::CurveGroup;
 use ark_ff::Zero;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
@@ -146,7 +145,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             signers_g2: self.curr.params.signer_pks.clone(),
             h2_pred: self.h2_curr(),
             tweaks: vec![],
-            abgpk_delta: C::G2::zero(),
+            gsk_delta: C::G2::zero(),
         };
         let _next_sharing = VerifiedSharing {
             secret_sharing: next_sharing.agg_ss.payload.clone(),
@@ -161,7 +160,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             signers_g2: self.next.params.signer_pks.clone(),
             h2_pred: self.h2_next(),
             tweaks: vec![],
-            abgpk_delta: C::G2::zero(),
+            gsk_delta: C::G2::zero(),
         };
 
         VerifiedSharingAndBack {
@@ -185,7 +184,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
             signers_g2: self.curr.params.signer_pks.clone(),
             h2_pred: self.h2_next(),
             tweaks: vec![],
-            abgpk_delta: C::G2::zero(),
+            gsk_delta: C::G2::zero(),
         }
     }
 }
@@ -200,31 +199,32 @@ pub struct VerifiedSharingWithG1Keys<C: Pairing> {
     signers_g2: Vec<C::G2Affine>,
     h2_pred: C::G2Affine,
     tweaks: Vec<Option<C::G2Affine>>,
-    abgpk_delta: C::G2,
+
+    /// `gsk_delta = f_curr(0).g2 - f_0(0).g2`
+    /// The difference between the secret `gsk_curr = f_curr(0).g2, curr := sid,` of the current epoch
+    /// and the secret `gsk_0 = f_0(0).g2` of the initial epoch.
+    ///
+    /// Allows to verify signatures, produced using the shared secret key of the current epoch,
+    /// with the public key of the initial epoch `C = f_0(0).g1`.
+    ///
+    gsk_delta: C::G2,
 }
 
 impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
-    pub fn tweak_msg(&self) -> C::G2 {
+
+    /// The final sharing contains `(h1, h2)`, such that `h1 = sh.h1, h2 = sh.g2` for some `sh`,
+    /// that is used to encrypt the `j`-the signer's share of the secret `f(w_j).g2` with ElGamal as
+    /// `bgpk_j = f(w^j).g2 + sh.pk_j = f(w^j).g2 + sk_j.h2` for `sk_j.g2 = pk_j.`
+    /// We want to replace this random `h2 = sh.g2` with a predictable `h2_perm = hash_to_g2(sid)`.
+    /// For that each signer, is required to publish a BLS signature (in G2) on `h2_tweak = h2_pred - h2`.
+    /// `tweak_j = sk_j.h2_tweak = sk_j.h2_pred - sk_j.h2`. That allows to adjust `bgpk_j` to
+    /// `bgpk_j_tweaked = bgpk_j + tweak_j = f(w^j).g2 + sk_j.h2_pred` accordingly.
+    ///
+    /// If it doesn't happen signer `j`'s signatures can't be aggregated in the evolving committee scheme.
+    ///
+    pub fn h2_tweak(&self) -> C::G2 {
         self.h2_pred - self.verified_sharing.secret_sharing.h2
     }
-
-    // pub fn tweak_bgpks(&self, sigs: &[(C::G2Affine, C::G2Affine)]) -> Vec<Option<C::G2Affine>> {
-    //     let tweak_msg = self.tweak_msg().into_affine();
-    //     let tweaked_bgpks = self.verified_sharing.aggregation_key().aggregate_tweaks(tweak_msg, sigs);
-    //     tweaked_bgpks
-    // }
-
-    // pub fn tweak(self, sigs: &[(C::G2Affine, C::G2Affine)]) -> TweakedSharing<C> {
-    //     // TODO: verify
-    //     let tweaked_bgpks = self.tweak_bgpks(sigs);
-    //     TweakedSharing {
-    //         sid: self.sid,
-    //         secret_sharing: self.verified_sharing,
-    //         signers_g1: self.signers_g1,
-    //         tweaked_bgpks,
-    //         h2_pred: self.h2_pred,
-    //     }
-    // }
 
     pub fn tweak_self(&mut self, sigs: Vec<BlsSigInG2<C>>) {
         let tweaks = self.prepare_tweaks(sigs);
@@ -233,7 +233,7 @@ impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
 
     pub fn prepare_tweaks(&self, sigs: Vec<BlsSigInG2<C>>) -> Vec<Option<C::G2Affine>> {
         let mut tweaks = vec![None; self.config.n];
-        let msg = self.tweak_msg().into_affine();
+        let msg = self.h2_tweak().into_affine();
         let pk_to_j = self.pk_g1_to_j();
         sigs.iter().for_each(|sig| {
             if let Some(&j) = pk_to_j.get(&sig.pk) {
@@ -257,29 +257,65 @@ impl<C: Pairing> VerifiedSharingWithG1Keys<C> {
         self.tweaks.iter().enumerate().map(|(j, sig)| sig.map(|sig| sig + self.ss.bgpk[j])).collect()
     }
 
-    /// Computes (f0(0) - f1_back(0)).g2
-    /// `deg(f0) = deg(f1_back) = t0 - 1`.
-    pub fn compute_delta(&self, bs: &Self) -> C::G2 {
-        let bgpk_deltas: Vec<Option<C::G2>> = self.tweaked_bpks().into_iter()
-            .zip(bs.tweaked_bpks().into_iter())
-            .map(|(curr, bs)| curr.zip(bs).map(|(curr, bs)| bs - curr))
+    /// Computes the difference between the secrets `gsk = ssk.g2 = f(0).g2` of 2 subsequent committees
+    ///  `delta = f_next(0).g2 - f_curr(0).g2`.
+    ///
+    /// Let `f0 := f_curr` be the current secret polynomial of degree `t0 - 1`.
+    /// The degree of `f1 := f_next` is not relevant.
+    ///
+    /// After applying the tweaks shares of the current committee are
+    /// `bgpk_j_tweaked = f0(w^j).g2 + sk_j.h2_pred_0, j=1,...,n0`
+    ///
+    /// The next epoch secret `f1(0).g2` is BACK-shared to the same (current) committee
+    /// using a degree `t0 - 1` polynomial `f_back := f'1` such that `f'1(0) = f1(0)`.
+    /// The back shares are tweaked to have the same `h2_pred_0`:
+    /// `bgpk_back_j_tweaked = f'1(w^j).g2 + sk_j.h2_pred_0, j=1,...,n0`.
+    ///
+    /// Then `delta_j = bgpk_back_j_tweaked - bgpk_j_tweaked = (f'1(w^j) - f0(w^j)).g2`.
+    /// The polynomial `f'1 - f0` has degree `t0 - 1`,
+    /// so `(f'1 - f0)(0).g2` can be interpolated from `t0` such `delta_j`s.
+    /// Finally, `f'1(0) - f0(0) = f1(0) - f0(0)`.
+    ///
+    /// So the requirement for this method to succeed is to have not less than `t0 = self.config.t`
+    /// pairs of corresponding `bgpk`s tweaked in the current share and the BACK share.
+    ///
+    fn compute_epoch_gsk_delta(&self, bs: &Self) -> C::G2 {
+        // `(f_back - f_curr)(w^j)` for some `j`s
+        let f_deltas: Vec<Option<C::G2>> = self.get_tweaked_bgpk_pairs(bs)
+            .map(|opt| opt.map(|(curr, back)| back - curr))
             .collect();
-        let (lis_at_zero, bgpk_deltas) = prepare(bgpk_deltas, &self.config);
-        let bgpk_deltas = C::G2::normalize_batch(&bgpk_deltas);
-        C::G2::msm(&bgpk_deltas, &lis_at_zero).unwrap()
+        let delta_f_at_0 = evaluate_at_0_in_g2(f_deltas, &self.config);
+        delta_f_at_0
     }
 
-    pub fn consume_back_sharing(&self, next: VerifiedSharingAndBack<C>) -> VerifiedSharingWithG1Keys<C> {
-        let new_delta = self.compute_delta(&next.back_sharing);
-        let mut next = next.next_sharing;
-        next.abgpk_delta = self.abgpk_delta + new_delta;
-        next
+    /// Computes the difference `delta_next = gsk_next - gsk_0` between the secrets of the next and the initial epochs
+    ///
+    /// `delta_curr := self.gsk_delta = gsk_curr - gsk_0`
+    /// `epoch_delta = gsk_next - gsk_curr`
+    /// `delta_next = gsk_next - gsk_0 = self.gsk_delta + epoch_delta`
+    pub(crate) fn compute_next_gsk_delta(&self, bs: &Self) -> C::G2 {
+        let epoch_delta = self.compute_epoch_gsk_delta(bs);
+        let delta_curr = self.gsk_delta;
+        let delta_next = delta_curr + epoch_delta;
+        delta_next
     }
 
+    // Returns `Some((curr.tweaked_bgpk_j, bs.tweaked_bgpk_j))` at the `j`-th position, or `None`.
+    fn get_tweaked_bgpk_pairs(&self, bs: &Self) -> impl Iterator<Item=Option<(C::G2, C::G2)>> {
+        self.tweaked_bpks().into_iter()
+            .zip(bs.tweaked_bpks().into_iter())
+            .map(|(curr_opt, back_opt)|
+                     curr_opt.zip(back_opt) // both `Options` should be `Some`
+            )
+    }
+
+    fn can_interpolate_delta(&self, bs: &Self) -> bool {
+        self.get_tweaked_bgpk_pairs(bs).flatten().count() >= self.config.t
+    }
 
     pub fn into_combiner(self) -> EcSigAgg<C> {
         let bgpks = self.tweaks.iter().enumerate().map(|(j, sig)| sig.map(|sig| (sig + self.ss.bgpk[j]).into_affine())).collect();
-        EcSigAgg::new(self.sid, self.signers_g2, self.signers_g1, bgpks, self.abgpk_delta, self.config)
+        EcSigAgg::new(self.sid, self.signers_g2, self.signers_g1, bgpks, self.gsk_delta, self.config)
     }
 }
 
@@ -291,39 +327,20 @@ pub struct VerifiedSharingAndBack<C: Pairing> {
     next_sharing: VerifiedSharingWithG1Keys<C>,
 }
 
-// #[derive(Clone, Debug)]
-// pub struct TweakedSharing<C: Pairing> {
-//     sid: u64,
-//     /// Secret shared to signers with keys in G2.
-//     secret_sharing: VerifiedSharing<C>,
-//     /// Signers' keys in G1 in the same order as `self.secret_sharing.params.signer_pks`
-//     signers_g1: Vec<C::G1Affine>,
-//     tweaked_bgpks: Vec<Option<C::G2Affine>>,
-//     h2_pred: C::G2Affine,
-// }
-//
-// impl<C: Pairing> TweakedSharing<C> {
-//     /// Computes the threshold public key delta. This is (f0(0) - f1_back(0)).g1
-//     /// `deg(f0) = deg(f1_back) = t0 - 1`.
-//     /// Thus both the current sharing and the back-shared one should have `t0` tweaked bgpks at the same positions.
-//     /// TODO: check for that
-//     pub fn compute_delta(&self, bs_next: &Self) -> C::G2Affine {
-//         let bgpk_deltas: Vec<C::G2> = self.tweaked_bgpks.iter()
-//             .zip(bs_next.tweaked_bgpks.iter())
-//             .map(|(curr, bs_next)| bs_next.unwrap() - curr.unwrap())
-//             .collect();
-//         let bgpk_deltas = C::G2::normalize_batch(&bgpk_deltas);
-//         let bs_next_config = &bs_next.secret_sharing.params.config;
-//         let lis_at_zero = BarycentricDomain::of_size(bs_next_config.domain, bs_next_config.n)
-//             .lagrange_basis_at(C::ScalarField::zero());
-//         C::G2::msm(&bgpk_deltas, &lis_at_zero).unwrap()
-//             .into_affine()
-//     }
-//
-//     pub fn into_signature_aggregator(self) -> EcSigAgg<C> {
-//         EcSigAgg::new(self.sid, self.secret_sharing.params.signer_pks, self.signers_g1, self.tweaked_bgpks, self.secret_sharing.params.config)
-//     }
-// }
+impl<C: Pairing> VerifiedSharingAndBack<C> {
+
+    /// Updates the `gsk_delta` of the next committee.
+    /// It is required to verify threshold proofs produced by the next committee with the
+    /// permanent public key (the public key of the committee at epoch #0).
+    /// `next.gsk_delta = curr.gsk_delta + delta(curr, back)`.
+    ///
+    /// Consumes `self.back_sharing` as it was only need to compute this delta.
+    pub fn sharing_with_delta(self, curr: &VerifiedSharingWithG1Keys<C>) -> VerifiedSharingWithG1Keys<C> {
+        let mut next = self.next_sharing;
+        next.gsk_delta = curr.compute_next_gsk_delta(&self.back_sharing);
+        next
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -361,7 +378,7 @@ mod tests {
         let ec_pk = EvolvingCommitteePk::with_c(ss_0.verified_sharing.secret_sharing.c);
 
         // Tweaks the key material (`bgpks` and `h2`)
-        let tweak_msg_0 = ss_0.tweak_msg();
+        let tweak_msg_0 = ss_0.h2_tweak();
         let tweaks_0: Vec<_> = signers_0[..t].iter().map(|s| s.sign_g2_point(tweak_msg_0)).collect();
         // let ss_tweaked_0 = ss_0.tweak(&tweaks_0);
         ss_0.tweak_self(tweaks_0);
@@ -381,11 +398,11 @@ mod tests {
         let ss_1_back = &mut verified_bs.back_sharing;
 
         // TWEAKS
-        let tweak_msg_1 = ss_1.tweak_msg();
+        let tweak_msg_1 = ss_1.h2_tweak();
         let tweaks_1: Vec<_> = signers_1[n - t..].iter()
             .map(|s| s.sign_g2_point(tweak_msg_1))
             .collect();
-        let tweak_msg_back_1 = ss_1_back.tweak_msg();
+        let tweak_msg_back_1 = ss_1_back.h2_tweak();
         let tweaks_back_1: Vec<_> = signers_0[..t].iter()
             .map(|s| s.sign_g2_point(tweak_msg_back_1))
             .collect();
@@ -394,7 +411,7 @@ mod tests {
         // let ss_back_tweaked_1 = ss_1_back.tweak(&tweaks_back_1);
         ss_1_back.tweak_self(tweaks_back_1);
         // let bgpk_delta = ss_0.compute_delta(&ss_1_back);
-        let ss_1 = ss_0.consume_back_sharing(verified_bs);
+        let ss_1 = verified_bs.sharing_with_delta(&ss_0);
 
         let sig_agg_1 = ss_1.into_combiner();
         let sigs_1: Vec<_> = signers_1[n - t..].iter().map(|s| s.sign_bytes_in_g1(b"msg1")).collect();

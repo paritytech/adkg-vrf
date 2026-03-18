@@ -1,7 +1,7 @@
 use crate::bs_dkg::BsDkg;
 use crate::hash_to_curve::CurveWithPairingAndHash;
 use crate::pvss;
-use crate::sig_agg::prepare;
+use crate::sig_agg::evaluate_lagrange_basis_at_0;
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 
@@ -73,7 +73,7 @@ pub fn aggregate_ec_sigs<C: Pairing>(
     augmented_sigs: Vec<Option<EvolvingCommitteeSig<C>>>,
     config: &pvss::Config<C>,
 ) -> EvolvingCommitteeSig<C> {
-    let (lis, augmented_sigs) = prepare(augmented_sigs, &config);
+    let (lis, augmented_sigs) = evaluate_lagrange_basis_at_0(augmented_sigs, &config);
     let sigs: Vec<C::G1Affine> = augmented_sigs.iter().map(|s| s.sig).collect();
     let pks_g1: Vec<C::G1Affine> = augmented_sigs.iter().map(|s| s.pk_g1).collect();
     let pks_g2: Vec<C::G2Affine> = augmented_sigs.iter().map(|s| s.pk_g2).collect();
