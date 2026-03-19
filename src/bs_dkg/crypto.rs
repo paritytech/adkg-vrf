@@ -72,8 +72,8 @@ impl<C: CurveWithPairingAndHash> EvolvingCommitteePk<C> {
 pub fn aggregate_ec_sigs<C: Pairing>(
     augmented_sigs: Vec<Option<EvolvingCommitteeSig<C>>>,
     config: &pvss::Config<C>,
-) -> EvolvingCommitteeSig<C> {
-    let (lis, augmented_sigs) = evaluate_lagrange_basis_at_0(augmented_sigs, &config);
+) -> Option<EvolvingCommitteeSig<C>> {
+    let (lis, augmented_sigs) = evaluate_lagrange_basis_at_0(augmented_sigs, &config).ok()?;
     let sigs: Vec<C::G1Affine> = augmented_sigs.iter().map(|s| s.sig).collect();
     let pks_g1: Vec<C::G1Affine> = augmented_sigs.iter().map(|s| s.pk_g1).collect();
     let pks_g2: Vec<C::G2Affine> = augmented_sigs.iter().map(|s| s.pk_g2).collect();
@@ -82,10 +82,10 @@ pub fn aggregate_ec_sigs<C: Pairing>(
     let apk_g1 = C::G1::msm(&pks_g1, &lis).unwrap().into_affine();
     let apk_g2 = C::G2::msm(&pks_g2, &lis).unwrap().into_affine();
     let abgpk = C::G2::msm(&bgpks, &lis).unwrap().into_affine();
-    EvolvingCommitteeSig {
+    Some(EvolvingCommitteeSig {
         sig: asig,
         pk_g1: apk_g1,
         pk_g2: apk_g2,
         bgpk: abgpk,
-    }
+    })
 }

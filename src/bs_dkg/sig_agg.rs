@@ -46,7 +46,7 @@ impl<C: Pairing> EcSigAgg<C> {
         }
     }
 
-    pub fn aggregate(&self, sigs: Vec<BlsSig<C>>) -> EvolvingCommitteeAggSig<C> {
+    pub fn aggregate(&self, sigs: Vec<BlsSig<C>>) -> Option<EvolvingCommitteeAggSig<C>> {
         let mut augmented_sigs = vec![None; self.config.n];
         sigs.into_iter().for_each(|sig| {
             if let Some((j, sig_ext)) = self.pk_ext.get(&sig.pk).map(|pk_ext| {
@@ -61,11 +61,11 @@ impl<C: Pairing> EcSigAgg<C> {
                 augmented_sigs[j] = Some(sig_ext);
             }
         });
-        let mut asig = aggregate_ec_sigs(augmented_sigs, &self.config);
+        let mut asig = aggregate_ec_sigs(augmented_sigs, &self.config)?;
         asig.bgpk = (asig.bgpk - self.bgpk_delta).into_affine();
-        EvolvingCommitteeAggSig {
+        Some(EvolvingCommitteeAggSig {
             sid: self.sid,
             asig,
-        }
+        })
     }
 }

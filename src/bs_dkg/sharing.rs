@@ -125,9 +125,8 @@ impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
     /// so `(f'1 - f0)(0).g2` can be interpolated from `t0` such `delta_j`s.
     /// Finally, `f'1(0) - f0(0) = f1(0) - f0(0)`.
     ///
-    /// So the requirement for this method to succeed is to have not less than `t0 = self.config.t`
-    /// pairs of corresponding `bgpk`s tweaked in the current share and the BACK share.
-    ///
+    /// Thus, to compute the `delta`, there should be not less than `t0 = self.config.t`
+    /// signers who have their `bgpk`s tweaked in bot the current share and the back share.
     fn compute_epoch_gsk_delta(&self, bs: &Self) -> C::G2 {
         // `(f_back - f_curr)(w^j)` for some `j`s
         let f_deltas: Vec<Option<C::G2>> = self.get_tweaked_bgpk_pairs(bs)
@@ -183,13 +182,14 @@ impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
 }
 
 impl<C: PairingWithG2Map> VerifiedSharingAndBack<C> {
+
     /// Updates the `gsk_delta` of the next committee.
     /// It is required to verify threshold proofs produced by the next committee with the
     /// permanent public key (the public key of the committee at epoch #0).
     /// `next.gsk_delta = curr.gsk_delta + delta(curr, back)`.
     ///
     /// Consumes `self.back_sharing` as it was only need to compute this delta.
-    pub fn sharing_with_delta(self, curr: &VerifiedSharingWithG1Keys<C>) -> VerifiedSharingWithG1Keys<C> {
+    fn sharing_with_delta(self, curr: &VerifiedSharingWithG1Keys<C>) -> VerifiedSharingWithG1Keys<C> {
         let mut next = self.next_sharing;
         next.gsk_delta = curr.compute_next_gsk_delta(&self.back_sharing);
         next

@@ -67,7 +67,6 @@ pub struct BsDkg<C: Pairing> {
 }
 
 impl<C: PairingWithG2Map> BsDkg<C> {
-
     /// In epoch #0 the assigned committee (`self.curr`) deals to itself (`self.next`).
     /// There is no backsharing as there's noone to backshare to (current committee).
     pub fn start(next: Committee<C>) -> Self {
@@ -191,7 +190,7 @@ mod tests {
         // A threshold signature of epoch #0 verifies
         let sig_agg_0 = ss_0.clone().into_combiner().unwrap();
         let sigs_0: Vec<_> = signers_0[..t].iter().map(|s| s.sign_bytes_in_g1(b"msg0")).collect();
-        let asig_0 = sig_agg_0.aggregate(sigs_0);
+        let asig_0 = sig_agg_0.aggregate(sigs_0).unwrap();
         ec_pk.verify(&asig_0, b"msg0");
 
         // EPOCH #1
@@ -216,7 +215,7 @@ mod tests {
         // A threshold signature of epoch #1 verifies against the public key of epoch #0 (permanent threshold public key).
         let sig_agg_1 = ss_1.into_combiner().unwrap();
         let sigs_1: Vec<_> = signers_1[n - t..].iter().map(|s| s.sign_bytes_in_g1(b"msg1")).collect();
-        let asig_1 = sig_agg_1.aggregate(sigs_1);
+        let asig_1 = sig_agg_1.aggregate(sigs_1).unwrap();
         ec_pk.verify(&asig_1, b"msg1");
     }
 }

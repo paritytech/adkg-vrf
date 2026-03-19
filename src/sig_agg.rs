@@ -4,6 +4,8 @@ use ark_poly::EvaluationDomain;
 use ark_std::Zero;
 use ark_std::{vec, vec::Vec};
 use hashbrown::HashMap;
+use std::error::Error;
+use std::fmt::Display;
 use std::iter;
 
 use crate::bls::threshold::AggThresholdSig;
@@ -11,6 +13,19 @@ use crate::bls::vanilla::BlsSig;
 use crate::pvss;
 use crate::utils::BarycentricDomain;
 use ark_ec::CurveGroup;
+
+#[derive(Debug)]
+pub struct InterpolationError {
+    n_evals: usize,
+    degree: usize,
+}
+impl Error for InterpolationError {}
+
+impl Display for InterpolationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.fmt(f)
+    }
+}
 
 /// Evaluations at `0` of Lagrange basis polynomials of the set of "indices" of the points.
 ///
@@ -23,8 +38,12 @@ use ark_ec::CurveGroup;
 ///
 /// If `points[i] = p(w^{i})` for a degree `t < s` polynomial `p`, then `p(0) = L_1(0).points[i_1] + ... + L_s(0).points[i_s]`.
 /// As an optimization, `s = config.t`.
-pub fn evaluate_lagrange_basis_at_0<T, C: Pairing>(opt_points: Vec<Option<T>>, config: &pvss::Config<C>) -> (Vec<C::ScalarField>, Vec<T>) {
-    assert_eq!(opt_points.len(), config.n);
+pub fn evaluate_lagrange_basis_at_0<T, C: Pairing>(opt_points: Vec<Option<T>>, config: &pvss::Config<C>) -> Result<(Vec<C::ScalarField>, Vec<T>), InterpolationError> {
+    debug_assert_eq!(opt_points.len(), config.n);
+    let n_evals = opt_points.iter().flatten().count();
+    if n_evals < config.t {
+        return Err(InterpolationError{ n_evals, degree: config.t - 1 });
+    }
     let mut set_bits = 0;
     let bitmask: Vec<bool> = opt_points.iter()
         .scan(&mut set_bits, |counter, opt| {
@@ -39,7 +58,7 @@ pub fn evaluate_lagrange_basis_at_0<T, C: Pairing>(opt_points: Vec<Option<T>>, c
         .chain(iter::repeat(false))
         .take(config.domain.size())
         .collect();
-    assert!(set_bits == config.t);
+    debug_assert!(set_bits == config.t);
     let lis = BarycentricDomain::from_subset(config.domain, &bitmask)
         .lagrange_basis_at(C::ScalarField::zero());
     let points: Vec<T> = opt_points.into_iter()
@@ -48,16 +67,12 @@ pub fn evaluate_lagrange_basis_at_0<T, C: Pairing>(opt_points: Vec<Option<T>>, c
         .collect();
     debug_assert_eq!(lis.len(), config.t);
     debug_assert_eq!(points.len(), config.t);
-    (lis, points)
+    Ok((lis, points))
 }
 
 /// Assuming `evals[i] = p(w^{i}).g2`, returns `p(0).g2`
-pub fn evaluate_at_0_in_g2<C: Pairing>(evals_opt: Vec<Option<C::G2>>, config: &pvss::Config<C>) -> Result<C::G2, (usize, usize)> {
-    let n_evals = evals_opt.iter().filter(|opt| opt.is_some()).count();
-    if n_evals < config.t {
-        return Err((n_evals, config.t));
-    }
-    let (lis_at_zero, evals) = evaluate_lagrange_basis_at_0(evals_opt, config);
+pub fn evaluate_at_0_in_g2<C: Pairing>(evals_opt: Vec<Option<C::G2>>, config: &pvss::Config<C>) -> Result<C::G2, InterpolationError> {
+    let (lis_at_zero, evals) = evaluate_lagrange_basis_at_0(evals_opt, config)?;
     let evals = C::G2::normalize_batch(&evals);
     let res = C::G2::msm(&evals, &lis_at_zero).unwrap();
     Ok(res)
@@ -73,8 +88,8 @@ pub fn evaluate_at_0_in_g2<C: Pairing>(evals_opt: Vec<Option<C::G2>>, config: &p
 pub fn aggregate_augmented_sigs<C: Pairing>(
     augmented_sigs: Vec<Option<AggThresholdSig<C>>>,
     config: &pvss::Config<C>,
-) -> AggThresholdSig<C> {
-    let (lis, augmented_sigs) = evaluate_lagrange_basis_at_0(augmented_sigs, config);
+) -> Option<AggThresholdSig<C>> {
+    let (lis, augmented_sigs) = evaluate_lagrange_basis_at_0(augmented_sigs, config).ok()?;
     let bls_sigs: Vec<_> = augmented_sigs
         .iter()
         .map(|s| s.bls_sig_with_pk.sig)
@@ -87,10 +102,10 @@ pub fn aggregate_augmented_sigs<C: Pairing>(
     let asig = C::G1::msm(&bls_sigs, &lis).unwrap().into_affine();
     let apk = C::G2::msm(&bls_pks, &lis).unwrap().into_affine();
     let abgpk = C::G2::msm(&bgpks, &lis).unwrap().into_affine();
-    AggThresholdSig {
+    Some(AggThresholdSig {
         bls_sig_with_pk: BlsSig { sig: asig, pk: apk },
         bgpk: abgpk,
-    }
+    })
 }
 
 
@@ -140,7 +155,7 @@ impl<C: Pairing> SignatureAggregator<C> {
             let (j, s) = self.augment_sig(sig).unwrap();
             augmented_sigs[j] = Some(s);
         });
-        aggregate_augmented_sigs(augmented_sigs, &self.config)
+        aggregate_augmented_sigs(augmented_sigs, &self.config).unwrap()
     }
 
     /// Checks that each signature verifies and comes from a legit signer.
@@ -149,7 +164,7 @@ impl<C: Pairing> SignatureAggregator<C> {
         let mut session = self.start_session(message);
         session.append_verify_sigs(sigs.clone());
         let augmented_sigs = session.finalize();
-        let threshold_sig = aggregate_augmented_sigs(augmented_sigs, &self.config);
+        let threshold_sig = aggregate_augmented_sigs(augmented_sigs, &self.config).unwrap();
         threshold_sig
     }
 
