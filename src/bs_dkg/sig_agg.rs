@@ -47,6 +47,7 @@ impl<C: Pairing> EcSigAgg<C> {
     }
 
     pub fn aggregate(&self, sigs: Vec<BlsSig<C>>) -> Option<EvolvingCommitteeAggSig<C>> {
+        (sigs.len() >= self.config.t).then(|| ())?;
         let mut augmented_sigs = vec![None; self.config.n];
         sigs.into_iter().for_each(|sig| {
             if let Some((j, sig_ext)) = self.pk_ext.get(&sig.pk).map(|pk_ext| {

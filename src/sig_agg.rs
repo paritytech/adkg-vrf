@@ -39,11 +39,11 @@ impl Display for InterpolationError {
 /// If `points[i] = p(w^{i})` for a degree `t < s` polynomial `p`, then `p(0) = L_1(0).points[i_1] + ... + L_s(0).points[i_s]`.
 /// As an optimization, `s = config.t`.
 pub fn evaluate_lagrange_basis_at_0<T, C: Pairing>(opt_points: Vec<Option<T>>, config: &pvss::Config<C>) -> Result<(Vec<C::ScalarField>, Vec<T>), InterpolationError> {
-    debug_assert_eq!(opt_points.len(), config.n);
     let n_evals = opt_points.iter().flatten().count();
     if n_evals < config.t {
         return Err(InterpolationError{ n_evals, degree: config.t - 1 });
     }
+    debug_assert_eq!(opt_points.len(), config.n);
     let mut set_bits = 0;
     let bitmask: Vec<bool> = opt_points.iter()
         .scan(&mut set_bits, |counter, opt| {
