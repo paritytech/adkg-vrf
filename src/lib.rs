@@ -35,7 +35,7 @@ pub mod pvss;
 pub mod sig_agg;
 pub mod straus;
 pub mod utils;
-mod bs_dkg;
+pub mod bs_dkg;
 
 mod hash_to_curve;
 pub use hash_to_curve::PairingWithG1Map;

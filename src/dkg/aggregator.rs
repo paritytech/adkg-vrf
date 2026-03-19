@@ -85,7 +85,7 @@ impl<C: CurveWithPairingAndHash> TranscriptAggregator<C>
         }
     }
 
-    fn aggregated_dealer_pks(&self) -> HashSet<C::G1Affine> {
+    pub fn aggregated_dealer_pks(&self) -> HashSet<C::G1Affine> {
         self.receipts
             .keys()
             .filter_map(|r| {

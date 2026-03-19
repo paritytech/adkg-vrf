@@ -3,7 +3,7 @@ use crate::hash_to_curve::CurveWithPairingAndHash;
 use crate::pvss;
 use crate::sig_agg::evaluate_lagrange_basis_at_0;
 use ark_ec::pairing::Pairing;
-use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ec::{CurveGroup, VariableBaseMSM};
 
 pub struct EvolvingCommitteePk<C: Pairing> {
     pub c: C::G1Affine,
@@ -12,7 +12,7 @@ pub struct EvolvingCommitteePk<C: Pairing> {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct EvolvingCommitteeSig<C: Pairing> {
+pub struct EvolvingCommitteeSig<C: Pairing> {
     pub(crate) sig: C::G1Affine,
     pub(crate) pk_g1: C::G1Affine,
     pub(crate) pk_g2: C::G2Affine,
@@ -25,11 +25,11 @@ pub struct EvolvingCommitteeAggSig<C: Pairing> {
 }
 
 impl<C: CurveWithPairingAndHash> EvolvingCommitteePk<C> {
-    pub fn with_c(c: C::G1Affine) -> Self {
+    pub(crate) fn new(c: C::G1Affine, config: &pvss::Config<C>) -> Self {
         Self {
             c,
-            g1: C::G1Affine::generator(),
-            g2: C::G2Affine::generator(),
+            g1: config.g1.into_affine(),
+            g2: config.g2.into_affine(),
         }
     }
 

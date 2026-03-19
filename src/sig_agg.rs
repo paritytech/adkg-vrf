@@ -5,7 +5,7 @@ use ark_std::Zero;
 use ark_std::{vec, vec::Vec};
 use hashbrown::HashMap;
 use std::error::Error;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::iter;
 
 use crate::bls::threshold::AggThresholdSig;
@@ -16,14 +16,14 @@ use ark_ec::CurveGroup;
 
 #[derive(Debug)]
 pub struct InterpolationError {
-    n_evals: usize,
-    degree: usize,
+    pub n_evals: usize,
+    pub degree: usize,
 }
 impl Error for InterpolationError {}
 
 impl Display for InterpolationError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        self.fmt(f)
+        <InterpolationError as Debug>::fmt(&self, f)
     }
 }
 
@@ -41,7 +41,7 @@ impl Display for InterpolationError {
 pub fn evaluate_lagrange_basis_at_0<T, C: Pairing>(opt_points: Vec<Option<T>>, config: &pvss::Config<C>) -> Result<(Vec<C::ScalarField>, Vec<T>), InterpolationError> {
     let n_evals = opt_points.iter().flatten().count();
     if n_evals < config.t {
-        return Err(InterpolationError{ n_evals, degree: config.t - 1 });
+        return Err(InterpolationError { n_evals, degree: config.t - 1 });
     }
     debug_assert_eq!(opt_points.len(), config.n);
     let mut set_bits = 0;

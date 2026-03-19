@@ -3,22 +3,15 @@ pub mod sig_agg;
 mod sharing;
 
 use crate::bls::vanilla::BlsSigner;
+use crate::bs_dkg::crypto::EvolvingCommitteePk;
 use crate::dkg::transcript::Transcript;
 use crate::dkg::{deal_and_sign, deal_and_sign_ssk};
-use crate::hash_to_curve::PairingWithG2Map;
+use crate::hash_to_curve::CurveWithPairingAndHash;
 use crate::pvss;
 use ark_ec::pairing::Pairing;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 use sharing::{VerifiedSharingAndBack, VerifiedSharingWithG1Keys};
-// TODO:
-// 1. signers' pks in g1
-// 2. signer's produce tweaks
-// 3. tweaks are verified, aggregated and applied
-// 4. new key material type
-// 5. new signature type
-// 6. aggregation for that
-// basically 2 cryptosuites, ideally with a fall-back option
 
 /// Back Sharing Distributed Key Generation Protocol.
 
@@ -66,7 +59,7 @@ pub struct BsDkg<C: Pairing> {
     pub next: Committee<C>,
 }
 
-impl<C: PairingWithG2Map> BsDkg<C> {
+impl<C: CurveWithPairingAndHash> BsDkg<C> {
     /// In epoch #0 the assigned committee (`self.curr`) deals to itself (`self.next`).
     /// There is no backsharing as there's noone to backshare to (current committee).
     pub fn start(next: Committee<C>) -> Self {
@@ -99,12 +92,12 @@ impl<C: PairingWithG2Map> BsDkg<C> {
     }
 
     /// Predictable `h2` corresponding to the current round of the protocol.
-    fn h2_curr(&self) -> C::G2Affine {
+    pub fn h2_curr(&self) -> C::G2Affine {
         Self::h2_of(self.next_committee_id - 1)
     }
 
     /// Predictable `h2` corresponding to the next round of the protocol.
-    fn h2_next(&self) -> C::G2Affine {
+    pub fn h2_next(&self) -> C::G2Affine {
         Self::h2_of(self.next_committee_id)
     }
 
@@ -123,7 +116,7 @@ impl<C: PairingWithG2Map> BsDkg<C> {
     }
 
     // TODO: this is a stub
-    pub fn verify<R: Rng>(&self, bs_transcript: BsTranscript<C>, rng: &mut R) -> VerifiedSharingAndBack<C> {
+    pub fn verify<R: Rng>(&self, bs_transcript: BsTranscript<C>, _rng: &mut R) -> VerifiedSharingAndBack<C> {
         let BsTranscript {
             next_committee_id,
             next_transcript,
@@ -140,16 +133,24 @@ impl<C: PairingWithG2Map> BsDkg<C> {
     }
 
     // TODO: this is a stub
-    pub fn verify_first<R: Rng>(&self, transcript: Transcript<C>, rng: &mut R) -> VerifiedSharingWithG1Keys<C> {
-        VerifiedSharingWithG1Keys::from_silent_transcript(transcript, &self.curr, self.next_committee_id)
+    pub fn verify_first<R: Rng>(&self, transcript: Transcript<C>, _rng: &mut R) -> (VerifiedSharingWithG1Keys<C>, EvolvingCommitteePk<C>) {
+        let c_0 = transcript.agg_ss.payload.c;
+        let ec_pk = EvolvingCommitteePk::new(c_0, &self.curr.params.config);
+        let ss = VerifiedSharingWithG1Keys::from_silent_transcript(transcript, &self.curr, self.next_committee_id);
+        (ss, ec_pk)
     }
 }
 
+// TODO:
+// 1. do we ever use C_i != C_0 w/o deltas
+// 2. do we want to indicate that the share is in some state (t tweaks collected)
+// 3. how transcripts and tweaks delivered
+// 4. who are signature combiners
+// 5. why shouldn't we run 2 schemes in parallel
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bs_dkg::crypto::EvolvingCommitteePk;
     use ark_bls12_381::Bls12_381;
     use ark_std::test_rng;
 
@@ -177,8 +178,7 @@ mod tests {
         // A secret is dealt to the epoch #0 committee (noone to backshare to).
         let bs_dkg = BsDkg::start(committee_0);
         let transcript = bs_dkg.deal_first(dealer.clone(), rng).unwrap();
-        let mut ss_0 = bs_dkg.verify_first(transcript, rng);
-        let ec_pk = EvolvingCommitteePk::with_c(ss_0.ss.c);
+        let (mut ss_0, ec_pk) = bs_dkg.verify_first(transcript, rng);
 
         // Committee #0 tweaks their (current) share.
         let tweak_msg_0 = ss_0.h2_tweak();

@@ -45,7 +45,7 @@ where
         BlsSigner::<C>::with_sk(sk).sign_g1_point(id_hash)
     }
 
-    fn decrypt_from_partials(&self, sig_agg: SignatureAggregator<C>, cc: &[u8], epk: &EncPk<C>, partials: Vec<BlsSig<C>>) -> Vec<u8> {
+    pub fn decrypt_from_partials(&self, sig_agg: SignatureAggregator<C>, cc: &[u8], epk: &EncPk<C>, partials: Vec<BlsSig<C>>) -> Vec<u8> {
         let id = (cc, epk.epk_bgpk, epk.epk_sig);
         let id_hash = BlsSigner::<C>::hash_to_g1(id);
         // TODO

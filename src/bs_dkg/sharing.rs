@@ -2,14 +2,13 @@ use crate::bls::vanilla::{verify_on_point, BlsSigInG2};
 use crate::bs_dkg::sig_agg::EcSigAgg;
 use crate::bs_dkg::{BsDkg, Committee};
 use crate::dkg::transcript::Transcript;
-use crate::hash_to_curve::PairingWithG2Map;
+use crate::hash_to_curve::CurveWithPairingAndHash;
 use crate::pvss;
 use crate::pvss::SecretSharing;
 use crate::sig_agg::evaluate_at_0_in_g2;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
-use ark_std::iterable::Iterable;
 use hashbrown::HashMap;
 
 /// Verified aggregated (related) secrets shared to `2` consequent committees of signers.
@@ -23,7 +22,7 @@ pub struct VerifiedSharingAndBack<C: Pairing> {
 pub struct VerifiedSharingWithG1Keys<C: Pairing> {
     sid: u64,
     config: pvss::Config<C>,
-    pub(crate) ss: SecretSharing<C>,
+    ss: SecretSharing<C>,
     signers_g1: Vec<C::G1Affine>,
     signers_g2: Vec<C::G2Affine>,
     h2_pred: C::G2Affine,
@@ -42,7 +41,7 @@ pub struct VerifiedSharingWithG1Keys<C: Pairing> {
     gsk_delta: C::G2,
 }
 
-impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
+impl<C: CurveWithPairingAndHash> VerifiedSharingWithG1Keys<C> {
     pub fn from_silent_transcript(transcript: Transcript<C>, committee: &Committee<C>, sid: u64) -> Self {
         let config = committee.params.config.clone();
         Self {
@@ -132,7 +131,8 @@ impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
         let f_deltas: Vec<Option<C::G2>> = self.get_tweaked_bgpk_pairs(bs)
             .map(|opt| opt.map(|(curr, back)| back - curr))
             .collect();
-        let delta_f_at_0 = evaluate_at_0_in_g2(f_deltas, &self.config).unwrap(); //TODO
+        // the only code path to here goes through `tweak_bs_and_try_compute_delta`
+        let delta_f_at_0 = evaluate_at_0_in_g2(f_deltas, &self.config).unwrap();
         delta_f_at_0
     }
 
@@ -181,7 +181,7 @@ impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
     }
 }
 
-impl<C: PairingWithG2Map> VerifiedSharingAndBack<C> {
+impl<C: CurveWithPairingAndHash> VerifiedSharingAndBack<C> {
 
     /// Updates the `gsk_delta` of the next committee.
     /// It is required to verify threshold proofs produced by the next committee with the
