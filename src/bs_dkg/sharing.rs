@@ -3,12 +3,13 @@ use crate::bs_dkg::sig_agg::EcSigAgg;
 use crate::bs_dkg::{BsDkg, Committee};
 use crate::dkg::transcript::Transcript;
 use crate::hash_to_curve::PairingWithG2Map;
+use crate::pvss;
 use crate::pvss::SecretSharing;
 use crate::sig_agg::evaluate_at_0_in_g2;
-use crate::pvss;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+use ark_std::iterable::Iterable;
 use hashbrown::HashMap;
 
 /// Verified aggregated (related) secrets shared to `2` consequent committees of signers.
@@ -26,7 +27,12 @@ pub struct VerifiedSharingWithG1Keys<C: Pairing> {
     signers_g1: Vec<C::G1Affine>,
     signers_g2: Vec<C::G2Affine>,
     h2_pred: C::G2Affine,
-    tweaks: Vec<Option<C::G2Affine>>,
+    /// `bgpks` adjusted to account the transition from `self.ss.h2` to `h2_pred`.
+    /// `bgpk_j_tweaked = bgpk_j + tweak_j`
+    /// `bgpk_j = f(w^j).g2 + sh.pk_j`
+    /// `tweak_j = sk_j.(h2_pred - h2)`
+    /// Thus `bgpk_j_tweaked = f(w^j).g2 + sk_j.h2_pred`.
+    bgpks_tweaked: Vec<Option<C::G2Affine>>,
 
     /// The difference between the secrets of the current and the initial epochs.
     /// The secret key shared at epoch #K is `gsk_k = f_k(0).g2`.
@@ -38,18 +44,18 @@ pub struct VerifiedSharingWithG1Keys<C: Pairing> {
 
 impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
     pub fn from_silent_transcript(transcript: Transcript<C>, committee: &Committee<C>, sid: u64) -> Self {
+        let config = committee.params.config.clone();
         Self {
             sid,
-            config: committee.params.config.clone(),
+            config: config.clone(),
             ss: transcript.agg_ss.payload,
             signers_g1: committee.signers_g1.clone(),
             signers_g2: committee.params.signer_pks.clone(),
             h2_pred: BsDkg::<C>::h2_of(sid),
-            tweaks: vec![],
+            bgpks_tweaked: vec![None; config.n],
             gsk_delta: C::G2::zero(),
         }
     }
-
 
     /// The final sharing contains `(h1, h2)`, such that `h1 = sh.h1, h2 = sh.g2` for some `sh`,
     /// that is used to encrypt the `j`-the signer's share of the secret `f(w_j).g2` with ElGamal as
@@ -67,35 +73,37 @@ impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
         self.h2_pred - self.ss.h2
     }
 
-    pub fn tweak_self(&mut self, sigs: Vec<BlsSigInG2<C>>) {
-        let tweaks = self.prepare_tweaks(sigs);
-        self.tweaks = tweaks; //TODO: merge?
-    }
-
-    pub fn prepare_tweaks(&self, sigs: Vec<BlsSigInG2<C>>) -> Vec<Option<C::G2Affine>> {
-        let mut tweaks = vec![None; self.config.n];
+    pub fn apply_tweaks(&mut self, tweak_sigs: Vec<BlsSigInG2<C>>) {
         let msg = self.h2_tweak().into_affine();
+        // Signers are identified by their BLS public key in G1 sent together with the signature.
         let pk_to_j = self.pk_g1_to_j();
-        sigs.iter().for_each(|sig| {
-            if let Some(&j) = pk_to_j.get(&sig.pk) {
-                if verify_on_point::<C>(sig.sig, msg, sig.pk, self.config.g1) {
-                    tweaks[j] = Some(sig.sig)
-                }
-            }
-        });
-        tweaks
+        // Remove tweaks that
+        // 1. has been already applied,
+        // 2. `pk` from the signature doesn't belong to the signer set.
+        let useful_sigs: Vec<(usize, BlsSigInG2<C>)> = tweak_sigs.into_iter().filter_map(|sig| {
+            pk_to_j.get(&sig.pk) // signature's pk recognized
+                .and_then(|&j| self.bgpks_tweaked[j].is_none() // `bgpk` isn't tweaked yet
+                    .then(|| (j, sig)))
+        }).collect();
+        // TODO: BLS batch verification
+        let valid_sigs: Vec<(usize, BlsSigInG2<C>)> = useful_sigs.into_iter()
+            .filter(|(_, sig)| verify_on_point::<C>(sig.sig, msg, sig.pk, self.config.g1))
+            .collect();
+        // `bgpk_j_tweaked = bgpk_j + tweak_j`
+        let (js, tweaked_bgpks): (Vec<usize>, Vec<C::G2>) = valid_sigs.into_iter()
+            .map(|(j, sig)| (j, self.ss.bgpk[j] + sig.sig))
+            .unzip();
+        let tweaked_bgpks = C::G2::normalize_batch(&tweaked_bgpks);
+        js.into_iter().zip(tweaked_bgpks)
+            .for_each(|(j, bgpk_j)| self.bgpks_tweaked[j] = Some(bgpk_j));
     }
 
-    pub fn pk_g1_to_j(&self) -> HashMap<C::G1Affine, usize> {
+    fn pk_g1_to_j(&self) -> HashMap<C::G1Affine, usize> {
         self.signers_g1.iter()
             .copied()
             .enumerate()
             .map(|(j, pk_g1)| (pk_g1, j))
             .collect()
-    }
-
-    pub fn tweaked_bpks(&self) -> Vec<Option<C::G2>> {
-        self.tweaks.iter().enumerate().map(|(j, sig)| sig.map(|sig| sig + self.ss.bgpk[j])).collect()
     }
 
     /// Computes the difference between the secrets `gsk = ssk.g2 = f(0).g2` of 2 subsequent committees
@@ -134,7 +142,7 @@ impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
     /// `delta_curr := self.gsk_delta = gsk_curr - gsk_0`
     /// `epoch_delta = gsk_next - gsk_curr`
     /// `delta_next = gsk_next - gsk_0 = self.gsk_delta + epoch_delta`
-    pub(crate) fn compute_next_gsk_delta(&self, bs: &Self) -> C::G2 {
+    fn compute_next_gsk_delta(&self, bs: &Self) -> C::G2 {
         let epoch_delta = self.compute_epoch_gsk_delta(bs);
         let delta_curr = self.gsk_delta;
         let delta_next = delta_curr + epoch_delta;
@@ -142,21 +150,35 @@ impl<C: PairingWithG2Map> VerifiedSharingWithG1Keys<C> {
     }
 
     // Returns `Some((curr.tweaked_bgpk_j, bs.tweaked_bgpk_j))` at the `j`-th position, or `None`.
-    fn get_tweaked_bgpk_pairs(&self, bs: &Self) -> impl Iterator<Item=Option<(C::G2, C::G2)>> {
-        self.tweaked_bpks().into_iter()
-            .zip(bs.tweaked_bpks().into_iter())
+    fn get_tweaked_bgpk_pairs(&self, bs: &Self) -> impl Iterator<Item=Option<(C::G2Affine, C::G2Affine)>> {
+        self.bgpks_tweaked.clone().into_iter()
+            .zip(bs.bgpks_tweaked.clone().into_iter())
             .map(|(curr_opt, back_opt)|
                      curr_opt.zip(back_opt) // both `Options` should be `Some`
             )
+    }
+
+    pub fn tweaked_signers_count(&self) -> usize {
+        self.bgpks_tweaked.iter().flatten().count()
     }
 
     fn can_interpolate_delta(&self, bs: &Self) -> bool {
         self.get_tweaked_bgpk_pairs(bs).flatten().count() >= self.config.t
     }
 
-    pub fn into_combiner(self) -> EcSigAgg<C> {
-        let bgpks = self.tweaks.iter().enumerate().map(|(j, sig)| sig.map(|sig| (sig + self.ss.bgpk[j]).into_affine())).collect();
-        EcSigAgg::new(self.sid, self.signers_g2, self.signers_g1, bgpks, self.gsk_delta, self.config)
+    fn can_interpolate_anything(&self) -> bool {
+        self.tweaked_signers_count() >= self.config.t
+    }
+
+    pub fn into_combiner(self) -> Option<EcSigAgg<C>> {
+        self.can_interpolate_anything().then(||
+            EcSigAgg::new(self.sid,
+                          self.signers_g2,
+                          self.signers_g1,
+                          self.bgpks_tweaked,
+                          self.gsk_delta,
+                          self.config,
+            ))
     }
 }
 
@@ -171,5 +193,10 @@ impl<C: PairingWithG2Map> VerifiedSharingAndBack<C> {
         let mut next = self.next_sharing;
         next.gsk_delta = curr.compute_next_gsk_delta(&self.back_sharing);
         next
+    }
+
+    pub fn tweak_bs_and_try_compute_delta(mut self, tweak_sigs: Vec<BlsSigInG2<C>>, curr: &VerifiedSharingWithG1Keys<C>) -> Option<VerifiedSharingWithG1Keys<C>> {
+        self.back_sharing.apply_tweaks(tweak_sigs);
+        curr.can_interpolate_delta(&self.back_sharing).then(|| self.sharing_with_delta(curr))
     }
 }

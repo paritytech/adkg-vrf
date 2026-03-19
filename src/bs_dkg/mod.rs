@@ -175,22 +175,21 @@ mod tests {
         let dealer = signers_0[0].clone();
 
         // EPOCH #0
-
-        // Deals secret shares to the epoch #0 committee (noone to backshare to)
+        // A secret is dealt to the epoch #0 committee (noone to backshare to).
         let bs_dkg = BsDkg::start(committee_0);
         let transcript = bs_dkg.deal_first(dealer.clone(), rng).unwrap();
         let mut ss_0 = bs_dkg.verify_first(transcript, rng);
-        let c0 = ss_0.ss.c;
-        let ec_pk = EvolvingCommitteePk::with_c(c0);
+        let ec_pk = EvolvingCommitteePk::with_c(ss_0.ss.c);
 
-        // Tweaks the key material (`bgpks` and `h2`)
+        // Committee #0 tweaks their (current) share.
         let tweak_msg_0 = ss_0.h2_tweak();
-        let tweaks_0: Vec<_> = signers_0[..t].iter().map(|s| s.sign_g2_point(tweak_msg_0)).collect();
-        // let ss_tweaked_0 = ss_0.tweak(&tweaks_0);
-        ss_0.tweak_self(tweaks_0);
+        let tweaks_0: Vec<_> = signers_0[..t].iter()
+            .map(|s| s.sign_g2_point(tweak_msg_0))
+            .collect();
+        ss_0.apply_tweaks(tweaks_0);
 
-        // Tests a threshold signature at epoch 0
-        let sig_agg_0 = ss_0.clone().into_combiner();
+        // A threshold signature of epoch #0 verifies
+        let sig_agg_0 = ss_0.clone().into_combiner().unwrap();
         let sigs_0: Vec<_> = signers_0[..t].iter().map(|s| s.sign_bytes_in_g1(b"msg0")).collect();
         let asig_0 = sig_agg_0.aggregate(sigs_0);
         ec_pk.verify(&asig_0, b"msg0");
@@ -198,28 +197,24 @@ mod tests {
         // EPOCH #1
         let bs_dkg = bs_dkg.next(committee_1);
         let bs_transcript = bs_dkg.deal(dealer, rng).unwrap();
-        let mut verified_bs = bs_dkg.verify(bs_transcript, rng);
-        let ss_1 = &mut verified_bs.next_sharing;
-        let c1 = ss_1.ss.c;
-        let ss_1_back = &mut verified_bs.back_sharing;
+        let mut ss_with_bs = bs_dkg.verify(bs_transcript, rng);
 
-        // TWEAKS
+        // Committee #0 tweaks the back share
+        let tweak_msg_back_1 = ss_with_bs.back_sharing.h2_tweak();
+        let tweaks_back_1: Vec<_> = signers_0[..t].iter()
+            .map(|s| s.sign_g2_point(tweak_msg_back_1))
+            .collect();
+        let mut ss_1 = ss_with_bs.tweak_bs_and_try_compute_delta(tweaks_back_1, &ss_0).unwrap();
+
+        // Committee #1 tweaks the new share
         let tweak_msg_1 = ss_1.h2_tweak();
         let tweaks_1: Vec<_> = signers_1[n - t..].iter()
             .map(|s| s.sign_g2_point(tweak_msg_1))
             .collect();
-        let tweak_msg_back_1 = ss_1_back.h2_tweak();
-        let tweaks_back_1: Vec<_> = signers_0[..t].iter()
-            .map(|s| s.sign_g2_point(tweak_msg_back_1))
-            .collect();
-        // let ss_tweaked_1 = ss_1.tweak(&tweaks_1);
-        ss_1.tweak_self(tweaks_1);
-        // let ss_back_tweaked_1 = ss_1_back.tweak(&tweaks_back_1);
-        ss_1_back.tweak_self(tweaks_back_1);
-        // let bgpk_delta = ss_0.compute_delta(&ss_1_back);
-        let ss_1 = verified_bs.sharing_with_delta(&ss_0);
+        ss_1.apply_tweaks(tweaks_1);
 
-        let sig_agg_1 = ss_1.into_combiner();
+        // A threshold signature of epoch #1 verifies against the public key of epoch #0 (permanent threshold public key).
+        let sig_agg_1 = ss_1.into_combiner().unwrap();
         let sigs_1: Vec<_> = signers_1[n - t..].iter().map(|s| s.sign_bytes_in_g1(b"msg1")).collect();
         let asig_1 = sig_agg_1.aggregate(sigs_1);
         ec_pk.verify(&asig_1, b"msg1");
