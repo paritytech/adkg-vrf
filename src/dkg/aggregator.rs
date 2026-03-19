@@ -1,10 +1,8 @@
 use crate::dkg;
 use crate::dkg::transcript::{ContributionReceipt, Transcript};
+use crate::hash_to_curve::CurveWithPairingAndHash;
 use crate::pvss::SecretSharingWithWitness;
-use ark_ec::hashing::curve_maps::wb::{WBConfig, WBMap};
-use ark_ec::hashing::map_to_curve_hasher::MapToCurve;
 use ark_ec::pairing::Pairing;
-use ark_ec::CurveGroup;
 use ark_std::rand::Rng;
 use hashbrown::{HashMap, HashSet};
 
@@ -18,10 +16,7 @@ pub struct TranscriptAggregator<C: Pairing> {
     receipts: HashMap<ContributionReceipt<C>, u32>,
 }
 
-impl<C: Pairing> TranscriptAggregator<C>
-where
-    <C::G2 as CurveGroup>::Config: WBConfig,
-    WBMap<<C::G2 as CurveGroup>::Config>: MapToCurve<C::G2>,
+impl<C: CurveWithPairingAndHash> TranscriptAggregator<C>
 {
     pub fn new(dkg: dkg::Dkg<C>, dealer_pks: Vec<C::G1Affine>) -> Self {
         Self {
@@ -90,7 +85,7 @@ where
         }
     }
 
-    fn aggregated_dealer_pks(&self) -> HashSet<C::G1Affine> {
+    pub fn aggregated_dealer_pks(&self) -> HashSet<C::G1Affine> {
         self.receipts
             .keys()
             .filter_map(|r| {
@@ -117,15 +112,15 @@ mod tests {
         let (n, t) = (10, 7);
 
         let dealers: Vec<_> = (0..3).map(|_| BlsSigner::<Bls12_381>::new(rng)).collect();
-        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.bls_pk_g1).collect();
+        let dealer_pks: Vec<G1Affine> = dealers.iter().map(|d| d.pk_g1).collect();
 
         let signers_pks: Vec<_> = (0..n).map(|_| G2Affine::rand(rng)).collect();
 
         let dkg =
             Dkg::<Bls12_381>::new(signers_pks, t, dealer_pks.clone(), dealer_pks.len()).unwrap();
-        let ss1 = dkg.deal_and_sign(rng, dealers[0].pk_in_g1()).unwrap();
-        let ss2 = dkg.deal_and_sign(rng, dealers[1].pk_in_g1()).unwrap();
-        let ss3 = dkg.deal_and_sign(rng, dealers[2].pk_in_g1()).unwrap();
+        let ss1 = dkg.deal_and_sign(rng, dealers[0].as_tuple()).unwrap();
+        let ss2 = dkg.deal_and_sign(rng, dealers[1].as_tuple()).unwrap();
+        let ss3 = dkg.deal_and_sign(rng, dealers[2].as_tuple()).unwrap();
 
         let agg = BlsTranscriptAggregator::new(dkg.clone(), dealer_pks);
 
